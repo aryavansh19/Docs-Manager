@@ -13,7 +13,6 @@ def search_drive_files(folder_id, phone_number, query_text=None):
     # Base query: "Is inside this folder" AND "Not a trash file"
     query = f"'{folder_id}' in parents and trashed = false"
 
-    # If user gave a specific keyword (like "notes"), add it
     if query_text:
         query += f" and name contains '{query_text}'"
 

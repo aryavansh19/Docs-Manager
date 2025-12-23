@@ -32,8 +32,6 @@ app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string")
 
 load_dotenv()
 
-#app = FastAPI()
-
 # --- CONFIG ---
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
