@@ -1,0 +1,193 @@
+{
+  "Machine Learning": {
+    "id": "1fapQIWks9OsxAMUXS1DsdVrowXFpmw-I",
+    "units": {
+      "Review of Statistical Concepts, Introduction to Machine Learning, Introduction to Python": "1v6Lcf1z7a9sm1r_VWuszB390yyYVK6E4",
+      "Introduction to Exploratory Data Analysis, Data Transformation, Data Visualization": "1z83zwkYLI0tSIUBzsveMYoGm8HSioT7a",
+      "Supervised Learning Algorithms": "1qvOhJvUmmqON44Nbn_cy7W8rtTQ2uDda",
+      "Clustering, Dimensionality Reduction": "1SIS0ARA7JagdYG3s0VifgFu-LYdVIybo",
+      "Model Evaluation and Selection, Hyperparameter Optimization Techniques": "1SaHtDyIiEM8wnu51g-tXGrp9mup1XYop"
+    }
+  },
+  "Operating Systems": {
+    "id": "1XMORISDkn2kODs-Ot4AlSZMoidyKHKUz",
+    "units": {
+      "Introduction to Operating Systems, UNIX": "1GW00fwrOhlsh69-8Yx8i8YIa2job5nx0",
+      "Process Management": "1nbPu_i4uAKCK3Vi1RgRRGdUNLDa-lFUD",
+      "Deadlocks": "1MHTe-B9GqjRBALcug5VCRnzmOf6oUGOA",
+      "Memory Management": "1dFXRfs7rHsIEwFREqhwLEiCNUg8JYVTf",
+      "File System Management": "1obZUEigoho_hzsazBuEFFsR5PoyrCHQd"
+    }
+  },
+  "Database Management System": {
+    "id": "1KxEAic8m9badK67joVoaT3iQ6ZXpwLYp",
+    "units": {
+      "Unit 1: Introduction to DBMS and Architecture": "1doGDGcnjLkyszs-Z6856GKcWWF4AhDHL",
+      "Unit 2: Entity-Relationship Model": "15NL_yTCpjz9jMmYvpotdwehHEUDALuRy",
+      "Unit 3: Relational Model, Relational Algebra, SQL, and Optimization": "1qxZFzFcGzC01TW_hjkVutrmwBUPuHYjN",
+      "Unit 4: Database Design and Normalization": "1QpR0Lp9JEU_eeZYLL1cNQLXJHfDiqDtF",
+      "Unit 5: Transaction Management and Crash Recovery": "1hnwMB3exrfCJicQOTyzni9KM1hO1PjMR"
+    }
+  },
+  "Operating Systems Lab": {
+    "id": "1wz3fk7W_E31euRzi-H3v2big6HQHMVcF",
+    "units": {
+      "System calls for process management (FORK, WAIT)": "14xUcyHzjEjBDvfxma0mCjRychuhAnkj1",
+      "Process synchronization (PIPE, FIFO, MESSAGE QUEUE, SHARED MEMORY)": "1K6yM6SKdKeWM531jU-h2R-yyG72MSIWF",
+      "CPU scheduling algorithms (FCFS, SJF, PRIORITY)": "1fQr8_1GEiSiXjRlj229DeofwYxbb-fBO",
+      "Page replacement policies (FIFO, LRU)": "1lE-pl12QJTSpfCnPhS7iNBe8vn2GK_ZB",
+      "Command execution using pipes and exec()": "1YOlQ1cIED2lYcKCC8bmNKJ4-duIUcPDw"
+    }
+  },
+  "Database Management System Lab": {
+    "id": "1rGH8ZCuU_PiFddESlQgAxBMKb2du1Iz6",
+    "units": {
+      "ER-Modeling and Table Conversion": "16s61rsRT4nBvk3wgvLMhgu_MZoU6GGfD",
+      "Data Definition and Manipulation (DDL, DML)": "1kJnSF75XPLMwode5JxDKE__CbkHxEquk",
+      "Integrity Constraints and NULL values": "1j_1wcGo-o-K3zZpokzRZJKgu8jHrFO3y",
+      "Advanced SQL: Joins, Aggregate Functions, and Subqueries": "1C-8X-c-vnHu6i3doQOc-GrhuxPO7_MP8",
+      "Database Triggers and Case Studies (Hospital, Employee, Trainee records)": "1EkmjxmwSk8I4o7q1qbHn1G41dH8c7fOB"
+    }
+  },
+  "Cloud-Based Application Development and Management": {
+    "id": "1RsIqVHuXLBlpddiVPCCZZ5zPCgnjmSEG",
+    "units": {
+      "Unit 1: Fundamental of Cloud Based Applications": "1Tw42KHaEflvBp0dzZf0AxYoNhzDGBefe",
+      "Unit 2: Cloud Platforms in Industry (AWS, Google App Engine, Azure)": "1G1IiIjwQ6UkhFFXcguvp8d-P5O1Vsdm-",
+      "Unit 3: Advanced Cloud Computing (Energy Efficiency, Federation, Virtualization)": "1bz_yB3DZjL5L2kslDRBh8Tr7Uy4M2kD_",
+      "Unit 4: Cloud Management (SLA, Billing, Governance, Analytics)": "1KTwWDTPlJJ8hWTP9qnsDjwAlsAdT4HsF",
+      "Unit 5: Cloud Based Secured Applications Development": "140_pyfPRBXDxlX5QYBudnQC6pYXlN3Ll"
+    }
+  },
+  "Computer System Security": {
+    "id": "1WUrz57C-5DXYM_M60RlyPa7jhCwTZHJ-",
+    "units": {
+      "Unit 1: Introduction to System security (Attacks and Vulnerabilities)": "1YMRjKAuwsRKA3PgcW2NESyME-qwF8rgy",
+      "Unit 2: Software security (Set-UID, Buffer Overflow, Race Conditions)": "1NiDhlGFQaaLcFqcaVf8RY7TdDibjgMvM",
+      "Unit 3: Web Security (XSS, SQL Injection, CSRF, TLS)": "1y_aRXIrBHJo_-5I0siFePg6ykBuqDmng",
+      "Unit 4: Smartphone Security (Android/iOS models, Malware detection)": "14VUlUymnfadBjRIzpJ9uQcO0qU3gbYe7",
+      "Unit 5: Hardware and system security (Meltdown, Spectre, SCADA security)": "1bwiJbKZ-F4sNBQa80irGHgPyb6rEdTVF"
+    }
+  },
+  "Artificial Intelligence and Machine Learning": {
+    "id": "1eQzLqzRXtopdPVQWCOfnPAWgpA-AVwTj",
+    "units": {
+      "Unit 01: Introduction to AI and Search Strategies": "1WqoHwVWR9VfRKt6H_p01t-iINYHs520m",
+      "Unit 02: Knowledge representation and reasoning": "1_DUTPISIByIiT73_BLA6DNokw3LySaI2",
+      "Unit 3: Introduction to Machine Learning and Supervised Learning": "1ShDgWjunUu4CaQ4HaI5A9z-moWhI4DfZ",
+      "Unit 4: Clustering, Dimensionality Reduction, and Model Evaluation": "17mqJ6f7eT-j0M3mTC2yCh3gd7zLW2h9B",
+      "Unit 5: Problem Solving Agents and Adversarial Search": "1zKJ3s3DEqnTHWe3B5A9MeeFsqbByACJX"
+    }
+  },
+  "Deep Learning Fundamentals": {
+    "id": "1CmG0LJa4VujRINJcoxKh3xLueeVyhZxs",
+    "units": {
+      "History and Basics of Deep Learning": "1hrKogvz0LDADAEoRjkA-ngxUjM5w3F4u",
+      "Neural Network Basics and MLPs": "1OsymI3NOGDTuXyQiwZKrY1ZK-8P3NWIR",
+      "Gradient Descent and Backpropagation": "1u65vn87dbrQWT6YZqD0xK1YHaBkGb8Lq",
+      "Regularization, Dropout, and Optimization Methods": "1gKcxfxERKgm-FXxsI8594QqWoAAe2f-T",
+      "Convolutional Neural Networks (CNNs) and Architectures": "1vaacG5NmENQhqaSIgQn2pR7YJBaBA2qY",
+      "Recurrent Neural Networks (RNNs) and LSTMs": "1RBNOMMjEEfVsgbD-TVULUE9bOzbrQFEk"
+    }
+  },
+  "Computer Vision": {
+    "id": "1fmSxn8mDr0eLWOZcuockU5gY4HsOdiKG",
+    "units": {
+      "Unit 1: Introduction to Image Processing and Computer Vision": "1Al-ErKK4uOSPzE9uX_A2q7NmUgjjj-UF",
+      "Unit 2: Image Processing / Low-Level Vision": "1ZQ_tpK518M3F-BxsX_7hVDrTkdqhhups",
+      "Unit 3: Mid-Level Vision": "1hNsr1sVAnFha4ahjDubuC7jNoydMJ4Za",
+      "Unit 4: High-Level Vision": "1NbnxLMKHBZaFqYiX9TG04VSqdEFo7eUp",
+      "Unit 5: Applications of Image Processing and Computer Vision": "1fpPtPKFzYA61PZpmaOhg4B63FFNApOUi"
+    }
+  },
+  "Introduction to Artificial Intelligence and Data Science": {
+    "id": "1vJmt9nei6BjhILEEja-sUbudKI2fyzpe",
+    "units": {
+      "Unit 01: Data Science History and Introduction to AI": "1mXiZ6GG00D-YOtmWoxFoUeb9VBRB9-Vq",
+      "Unit 02: Data Preprocessing and Knowledge Reasoning": "1hjo7Cq6WOWVBP9x-48P6jUF-WyWESQmK",
+      "Unit 3: Modelling Techniques (Supervised and Unsupervised Learning)": "1UQgNhRGjZBZD2sXmHhw0gx4lkklbeKrF",
+      "Unit 4: Problem Solving and Search Methods": "1-ZMp6uFudkwREvluj5ZN86vGQrStKgbj",
+      "Unit 5: Applications of Analytics and Expert Systems": "1f1g3gnXIuyUIBf7vu2l1LapPryGvvjfY"
+    }
+  },
+  "Computer Networks": {
+    "id": "1epZf4OPeUthElSW1p5czdhWpG6Mg-qGx",
+    "units": {
+      "Unit 1: Introduction to Computer Networks and the Internet": "1z2SuSNc2ni4fxy0gc6_FTKHwiaivfP0H",
+      "Unit 2: Application Layer (HTTP, DNS, P2P)": "1ruUaT0hBku3TQuJ5MaPzFSDhzE-_VmKM",
+      "Unit 3: Transport Layer (TCP, UDP, Congestion Control)": "1TCNHlXSSlbSVuPYZU7rDT8LDsts5QEGz",
+      "Unit 4: Network Layer (IP, Routing Algorithms, DHCP, NAT)": "10bdyc2q_VniFVTNAlvD6V38DGRnfVgrX",
+      "Unit 5: Link Layer and Local Area Networks (ARP, Ethernet, VLANs)": "185T6RH5yB8fvXXCXKyfp_bjDTrWMcYlU"
+    }
+  },
+  "Introduction to AI and DS Lab": {
+    "id": "13Zw6dIAcdUwDnqw1it_Xuwk2-VB_IlZU",
+    "units": {
+      "Data Wrangling and EDA": "1gaMJAxZ4_NCCFA2wouKw5P3ZEd_A7vX3",
+      "Feature Selection and Informed/Uninformed Search": "1I_68iO5RktfK7LsKoPJn7mwxelGgd63o",
+      "Supervised and Unsupervised Learning Implementation": "1eOzd5M9Ub3XgXk7d8sddN3gqWIzZuKC3",
+      "Data Visualization and Sentiment Analysis": "1qhtEb8EUPUkVUkD5Rl6TfnM6La8CZPVu",
+      "Chatbot Development and Smart Application Case Studies": "1Oo9cRkboETUmsiXvuYV9e-XPYFXTAuj3"
+    }
+  },
+  "Computer Networks Lab": {
+    "id": "1qpbRjMgv7sQFJR9L9uJit2MqEGD32Aku",
+    "units": {
+      "Network Utilities and Transmission Media (UTP cable preparation)": "1SriPLoLPlX3jh3iM4E2JyJRW-tTwY25n",
+      "Network Simulation and Topology Configuration (Packet Tracer)": "1H_KQ2zWtdBA-W0YlpR1ZxuALCCrwwFuj",
+      "Protocol Analysis using Wireshark": "1N0rbiPqVvCwH11iD752Uk4mGFBJiuoFa",
+      "Static and Dynamic Routing (RIP, OSPF)": "1i_-Lj1Ph7WDW-0fUgICOR3xemTTfTxqT",
+      "Socket Programming (TCP/UDP Client-Server in C)": "1Uz9uCSz4JhP1tMhqLqs8ejWO0gDZxqJl"
+    }
+  },
+  "Natural Language Processing and Computer Vision": {
+    "id": "1sEltxXeAVckFvtpw-sIzXtisNM2jsNLu",
+    "units": {
+      "UNIT 1: Introduction to NLP and Text Processing": "1XCQjQ6hHRFbXoERKP0ErleQGOoNtiseA",
+      "UNIT 2: Syntax, Parsing, and Language Models": "11ire551qEyYYClEvRNyOhCyolzHWaYkl",
+      "UNIT 3: Sentiment Analysis and NLP Applications": "1-UTNv885nKepmWLPD5lInzmkO0u-pqBf",
+      "UNIT 4: Introduction to Computer Vision and Image Segmentation": "1K8xriQZYnlq0OkIkUmIIggCvUqVVPdkM",
+      "UNIT 5: Object Detection, Deep Learning for Vision, and Advanced Topics": "1GjmKnYkQgg-j_lJie8IewYGPk0Jr0U-Q"
+    }
+  },
+  "Computer System Security Lab": {
+    "id": "1F_EUViDO_lYZvOvbMP-Xu08AN_IW7s-3",
+    "units": {
+      "Vulnerability Demonstrations (Buffer Overflow, Race Condition, Dirty Cow)": "1CdfAMKA2rKnc-pZbvvcGU-IZvBPX_dHL",
+      "Web Security Attacks (XSS, CSRF, SQL Injection)": "18LGBfISHwJFhjgIPZFi-oFZNwZZ1a0rW",
+      "Network Security Tools (Burp Suite, Metasploit, Wireshark)": "1vmkvZM3VOy7cRbIhlGNiX7GmrsapVeyQ",
+      "Protocol Analysis (HTTPs, ICMP)": "11HB1YPYATIbTJfdGdDoNOMDy2dmv4hik",
+      "Case Studies on Hardware Security and Side Channel Attacks": "14lWLuP1OvSn0Qv-svxNbr2A5euuMyArt"
+    }
+  },
+  "Block chain Technology and its application": {
+    "id": "1tE-IiSsjv_pDGCxf3AfsqXpEoVWCcU0z",
+    "units": {
+      "Unit 1: Introduction to blockchain and Structure of blocks": "1li2D9bxDuMTx41qPJFmNVjEfSPPw_4mP",
+      "Unit 2: Application of cryptography to blockchain": "1VPKrrtG2akq1DAnP3Ah0Ptr6mKm8Mg7Q",
+      "Unit 3: Distributed ledger and Consensus mechanisms": "18vk11M3f6R9mo5vqsXS6Catx3DHa1orX",
+      "Unit 4: Blockchain mining and Forking": "1Gaoor4ead7t9iOi509b6YdEMO3-BHiy_",
+      "Unit 5: Ethereum and Applications in banking, healthcare, and IoT": "1qjxzKGAVffXTmYyj5NZIS4xAd0QXdCxx"
+    }
+  },
+  "Big Data Visualization": {
+    "id": "1FZmMy9bf7GYeCoSuhtzCswii8q1Exry8",
+    "units": {
+      "Unit 1: Techniques for visual data representations": "1prTKCzSdgLi0p4a27U6e954UYtehoXTO",
+      "Unit 2: Editorial Focus, Conceiving and Reasoning": "1odkow4hE32x66ZyxUv0obeQprinvp9gd",
+      "Unit 3: Taxonomy of Data Visualization and Mapping Geospatial data": "1lRv0x_0LaO9BjrSm0nizuaHVk6YVSwHC",
+      "Unit 4: Tools for data visualization (Tableau, Google Charts)": "1fsHkvw_Ss6TUtXftRWDiwD0m2RJ2sYGp",
+      "Unit 5: Advanced Data Visualization through Tableau": "110DMXy2B0jTmM_yBhcwp2zGOOYoBffb6"
+    }
+  },
+  "Reinforcement Learning": {
+    "id": "1TCSopdX97ClbRGPNrtDKtmkbh_QPDYk3",
+    "units": {
+      "UNIT 1: Introduction to Reinforcement Learning and MDPs": "1PCS5YsNd8UksXnfMDXXa7zMkByCz4S9g",
+      "UNIT 2: Dynamic Programming and Monte Carlo Methods": "16vOOomWi4JQq9jM6BI2B3wJveLcDY4y3",
+      "UNIT 3: Temporal Difference Learning (SARSA, Q-learning)": "1uuezSLbvzeRodZqpTvtiKuq04qmO7qXS",
+      "UNIT 4: Advanced RL Algorithms (DQN, Actor-Critic)": "1CttjM9AKehcXg1UjeV1dLLfxgwRerTFx",
+      "UNIT 5: RL in Practice (Robotics, Games, Real-world applications)": "1TwRuwhLjwKMxAoCIbcJIPwDOFsrRVc8G"
+    }
+  }
+}
