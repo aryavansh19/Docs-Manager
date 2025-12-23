@@ -15,7 +15,7 @@ def parse_syllabus_with_gemini(file_path):
 
     # 1. Upload File
     myfile = genai.upload_file(file_path)
-    model = genai.GenerativeModel("gemini-3-flash-preview")
+    model = genai.GenerativeModel("gemini-2.5-flash")
 
     # 2. The Prompt (Strict JSON output)
     prompt = """

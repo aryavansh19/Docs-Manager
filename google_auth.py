@@ -1,37 +1,41 @@
-import os
 import json
-from google.auth.transport.requests import Request
+import os
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from database import get_user
+from dotenv import load_dotenv
 
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/drive']
+load_dotenv() # Make sure we can read .env
 
+def authenticate_drive(phone_number):
+    """
+    Authenticates using the token stored in the SQLite database for a specific user.
+    """
+    print(f"🔐 Authenticating User: {phone_number}")
 
-def authenticate_drive():
-    """Authenticates the user using a browser window."""
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first time.
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    # 1. Get User Data
+    user = get_user(phone_number)
+    token_data = user.get("google_token")
 
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists('credentials.json'):
-                raise FileNotFoundError(
-                    "❌ Missing 'credentials.json'! Download 'OAuth Client ID' JSON from Google Cloud.")
+    if not token_data:
+        raise ValueError(f"❌ No Google Token found for user {phone_number}. Please login first.")
 
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)  # port=0 picks any free port
+    # --- THE FIX: Handle String vs Dictionary ---
+    # If the database returned a String, convert it to a Dictionary
+    if isinstance(token_data, str):
+        try:
+            token_data = json.loads(token_data)
+        except json.JSONDecodeError:
+            raise ValueError("❌ Database Error: Stored token is not valid JSON.")
+    # ---------------------------------------------
 
-        # Save the credentials for the next run
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+    # 2. Reconstruct Credentials object
+    creds = Credentials(
+        token=token_data.get("access_token"),
+        refresh_token=token_data.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv("GOOGLE_CLIENT_ID"),
+        client_secret=os.getenv("GOOGLE_CLIENT_SECRET")
+    )
 
     return build('drive', 'v3', credentials=creds)

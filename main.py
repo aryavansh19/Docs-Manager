@@ -13,9 +13,26 @@ from test_sorting import ask_gemini_to_sort, upload_to_drive, authenticate_drive
 from drive_search import search_drive_files
 from test_sorting import parse_search_intent # Or wherever you pasted the function above
 
+from folder_creator import build_drive_structure
+from starlette.responses import RedirectResponse
+
+from starlette.middleware.sessions import SessionMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.templating import Jinja2Templates
+from fastapi import UploadFile, File
+import shutil
+
+# Setup Templates
+templates = Jinja2Templates(directory="templates")
+app = FastAPI()
+
+# Add Session Middleware (Encrypts cookies)
+# "secret-key" should be random. In production, use os.getenv("SECRET_KEY")
+app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string")
+
 load_dotenv()
 
-app = FastAPI()
+#app = FastAPI()
 
 # --- CONFIG ---
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -27,6 +44,150 @@ if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
 
 # --- MEMORY FOR BUTTONS ---
 pending_actions = {}
+
+
+# --- ROUTE 1: SHOW LOGIN PAGE ---
+@app.get("/")
+def home(request: Request):
+    # Check if user is already logged in (has cookie)
+    user_info = request.session.get('user')
+    if user_info:
+        return f"✅ Logged in as: {user_info.get('email')}"
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+# --- ROUTE 2: REDIRECT TO GOOGLE
+@app.get("/login")
+def login(request: Request):
+    # Get the phone number from the URL (?phone=...)
+    phone = request.query_params.get("phone")
+
+    if not phone:
+        return "❌ Error: Missing phone number. Please click the link from WhatsApp again."
+
+    # Save phone in a cookie so we remember it after they come back from Google
+    request.session["user_phone"] = phone
+
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    redirect_uri = "http://localhost:8000/auth/callback"
+    scope = "https://www.googleapis.com/auth/drive"
+
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&access_type=offline&prompt=consent"
+
+    return RedirectResponse(url)
+
+
+# Import database functions if not already there
+from database import update_user, get_user
+
+
+@app.get("/auth/callback")
+def auth_callback(request: Request):
+    code = request.query_params.get("code")
+    if not code: return "❌ Error: No code received."
+
+    # 1. Exchange Code for Token
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+        "redirect_uri": "http://localhost:8000/auth/callback",
+        "grant_type": "authorization_code"
+    }
+
+    r = requests.post(token_url, data=data)
+    tokens = r.json()
+
+    # 2. Retrieve the phone number we saved in the cookie
+    phone = request.session.get("user_phone")
+
+    if not phone:
+        return "❌ Error: Session lost. Try clicking the WhatsApp link again."
+
+    # 3. SAVE TO DATABASE!
+    # We save the entire token JSON (access_token + refresh_token)
+    update_user(phone, "google_token", tokens)
+    update_user(phone, "status", "CONNECTED")  # Update status
+
+    # Inside auth_callback function... after saving to DB:
+    return RedirectResponse(url="/dashboard", status_code=303)
+
+
+@app.post("/create-folders")
+async def create_folders_web(request: Request):
+    phone = request.session.get("user_phone")
+    if not phone: return RedirectResponse("/")
+
+    # 1. Get the Form Data (Which subjects did they check?)
+    form = await request.form()
+    selected_subjects = form.getlist("selected_subjects")  # List of subject names
+
+    # 2. Get the full syllabus from DB
+    user = get_user(phone)
+    full_syllabus = user.get("temp_syllabus_list", {})
+
+    # 3. Filter the list (Keep only selected subjects)
+    final_syllabus = {k: v for k, v in full_syllabus.items() if k in selected_subjects}
+
+    # 4. BUILD THE FOLDERS (Using your existing logic!)
+    # Note: build_drive_structure usually takes ~10-20 seconds.
+    # For a pro website, use BackgroundTasks. For now, we wait.
+    try:
+        root_id, new_map = build_drive_structure(phone, final_syllabus)
+
+        # 5. Save Final State
+        update_user(phone, "folder_map", new_map)
+        update_user(phone, "root_folder_id", root_id)
+        update_user(phone, "status", "ACTIVE")
+
+        # 6. Notify on WhatsApp
+        send_message(phone, "✅ **Setup Complete!**\nYour folders are ready. Send me a file now!")
+
+        return "🎉 Success! You can close this page and go back to WhatsApp."
+
+    except Exception as e:
+        return f"❌ Error creating folders: {e}"
+
+@app.get("/dashboard")
+def dashboard(request: Request):
+    phone = request.session.get("user_phone")
+    if not phone: return RedirectResponse("/")
+
+    # 1. Get User Data from DB
+    user = get_user(phone)
+
+    # 2. Get the Syllabus List (if it exists)
+    syllabus = user.get("temp_syllabus_list", {})
+    status = user.get("status")
+
+    # 3. Send everything to the HTML template
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "syllabus": syllabus,
+        "status": status
+    })
+
+
+@app.post("/upload-syllabus")
+async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
+    phone = request.session.get("user_phone")
+    if not phone: return RedirectResponse("/")
+
+    # 1. Save the file temporarily
+    temp_filename = f"syllabus_{phone}.pdf"
+    with open(temp_filename, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # 2. Parse with Gemini
+    subjects = parse_syllabus_with_gemini(temp_filename)
+
+    # 3. Save to DB and Update Status
+    update_user(phone, "temp_syllabus_list", subjects)
+    update_user(phone, "status", "EDITING_LIST")
+
+    # --- FIX: Redirect back to dashboard instead of returning text ---
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 # --- HELPER: Send Text ---
@@ -210,8 +371,21 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
 
             # --- NEW USER ---
             if status == "NEW":
-                send_message(sender, "👋 Welcome! Send me your **Syllabus PDF** to start setup.")
-                update_user(sender, "status", "AWAITING_SYLLABUS")
+                # 1. GET NGROK URL (Or hardcode it if you know it)
+                # You should put your current Ngrok URL in .env as BASE_URL
+                base_url = os.getenv("BASE_URL", "https://867441fb641f.ngrok-free.app")
+                # 2. Generate the correct Mobile Link
+                link = f"{base_url}/login?phone={sender}"
+
+                # 3. Send a Clean Message with a Link Preview
+                msg = (
+                    "👋 *Welcome to DocOrganizer!* \n\n"
+                    "I can organize your files automatically, but first I need permission to access your Google Drive.\n\n"
+                    f"👇 *Tap here to Connect:*\n{link}"
+                )
+                # Use standard send_message, but ensure 'preview_url' is enabled (default is usually yes)
+                send_message(sender, msg)
+                update_user(sender, "status", "AWAITING_LOGIN")
 
             # --- SETUP: AWAITING SYLLABUS ---
             elif status == "AWAITING_SYLLABUS":
@@ -272,7 +446,7 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                             send_message(sender, f"🔍 Searching in *{subj}*...")
 
                             # 2. Search Drive
-                            files = search_drive_files(target_id)
+                            files = search_drive_files(target_id,sender)
 
                             if files:
                                 response_msg = f"📂 **Files found in {subj}:**\n\n"
@@ -306,7 +480,7 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                         if btn_id == "save_file":
                             send_message(sender, "🚀 Uploading...")
                             try:
-                                drive_service = authenticate_drive()
+                                drive_service = authenticate_drive(sender)
                                 upload_to_drive(drive_service, action['local_path'], action['new_name'],
                                                 action['drive_folder_id'])
                                 send_message(sender, f"✅ Saved to *{action['subject']}*")

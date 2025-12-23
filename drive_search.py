@@ -2,11 +2,13 @@ from googleapiclient.discovery import build
 from google_auth import authenticate_drive
 
 
-def search_drive_files(folder_id, query_text=None):
+# --- UPDATE: Add phone_number argument here ---
+def search_drive_files(folder_id, phone_number, query_text=None):
     """
     Lists up to 5 files inside a specific folder.
     """
-    service = authenticate_drive()
+    # --- UPDATE: Pass phone_number to auth ---
+    service = authenticate_drive(phone_number)
 
     # Base query: "Is inside this folder" AND "Not a trash file"
     query = f"'{folder_id}' in parents and trashed = false"

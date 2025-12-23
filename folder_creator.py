@@ -17,8 +17,8 @@ def create_folder(service, name, parent_id=None):
 
 
 def build_drive_structure(user_phone, syllabus_list):
-    # 1. Authenticate (Opens Browser on first run)
-    service = authenticate_drive()
+    # 1. Authenticate (Pass the user_phone so we get the correct token!)
+    service = authenticate_drive(user_phone)
 
     # 2. Create Root Folder
     root_name = f"Smart Docs - {user_phone}"

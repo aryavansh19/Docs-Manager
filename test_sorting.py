@@ -23,7 +23,7 @@ def parse_search_intent(user_text, folder_map):
     """
     Asks Gemini: 'User wants X. Which folder ID from this list matches?'
     """
-    model = genai.GenerativeModel('gemini-3-flash-preview')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 
     # Simplify map for Gemini (Subject names only)
     map_summary = list(folder_map.keys())
@@ -57,7 +57,7 @@ def ask_gemini_to_sort(file_path, folder_map):
     print("🤖 AI is analyzing the file...")
 
     # Use the standard Flash model
-    model = genai.GenerativeModel('gemini-3-flash-preview')
+    model = genai.GenerativeModel('gemini-2.5-flash')
     myfile = genai.upload_file(file_path)
 
     # Simplify map for AI
