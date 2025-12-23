@@ -1,35 +1,66 @@
 import json
 import os
 import google.generativeai as genai
-from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
+from dotenv import load_dotenv
 
-# --- CONFIGURATION ---
-# 1. Get your API Key from: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY = "AIzaSyD1mByWj8Su82wAX4upMiG0fWN-qElhX70"
+# 1. Import the shared Auth logic (Do not define it again below!)
+from google_auth import authenticate_drive
 
-# --- SETUP ---
+# 2. Load Environment Variables
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("❌ Missing GEMINI_API_KEY in .env file")
+
 genai.configure(api_key=GEMINI_API_KEY)
 
+# Add this import
+import json
 
-def authenticate_drive():
-    """Logs in using your existing credentials."""
-    creds = Credentials.from_authorized_user_file('token.json')
-    return build('drive', 'v3', credentials=creds)
+def parse_search_intent(user_text, folder_map):
+    """
+    Asks Gemini: 'User wants X. Which folder ID from this list matches?'
+    """
+    model = genai.GenerativeModel('gemini-3-flash-preview')
+
+    # Simplify map for Gemini (Subject names only)
+    map_summary = list(folder_map.keys())
+
+    prompt = f"""
+    You are a Search Assistant.
+    User Query: "{user_text}"
+    Available Folders: {json.dumps(map_summary)}
+
+    1. Did the user ask to FIND/GET/SHOW a file? (yes/no)
+    2. Which 'Subject' from the list matches best? (If 'Aadhar', maybe 'Important Documents')
+
+    Return JSON:
+    {{
+        "is_search": true,
+        "subject": "Exact Subject Name",
+        "keyword": "optional extra keyword like 'unit 1'"
+    }}
+    """
+
+    try:
+        result = model.generate_content(prompt)
+        text = result.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
+    except:
+        return {"is_search": False}
 
 
-def load_folder_map():
-    with open('folder_map.json', 'r') as f:
-        return json.load(f)
-
-
+# --- FUNCTION 1: Ask Gemini (The Brain) ---
 def ask_gemini_to_sort(file_path, folder_map):
     print("🤖 AI is analyzing the file...")
+
+    # Use the standard Flash model
     model = genai.GenerativeModel('gemini-3-flash-preview')
     myfile = genai.upload_file(file_path)
 
-    # We simplify the map for Gemini (sending IDs confuses it, we just want names)
+    # Simplify map for AI
     syllabus_lite = {subj: list(data['units'].keys()) for subj, data in folder_map.items()}
 
     prompt = f"""
@@ -42,7 +73,7 @@ def ask_gemini_to_sort(file_path, folder_map):
     {{
       "subject": "Exact Subject Name",
       "unit": "Exact Unit Name",
-      "suggested_filename": "descriptive_name_with_underscores.pdf"
+      "suggested_filename": "Subject_Unit_Topic.pdf"
     }}
     """
 
@@ -53,40 +84,57 @@ def ask_gemini_to_sort(file_path, folder_map):
     return json.loads(result.text)
 
 
+# --- FUNCTION 2: Upload to Drive (The Action) ---
 def upload_to_drive(service, file_path, filename, folder_id):
     print(f"🚀 Uploading '{filename}' to Drive...")
+
     file_metadata = {'name': filename, 'parents': [folder_id]}
-    media = MediaFileUpload(file_path, mimetype='application/pdf')  # or image/jpeg
+
+    # Auto-detect mime type (simple check)
+    mime_type = 'application/pdf'
+    if file_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+        mime_type = 'image/jpeg'
+
+    media = MediaFileUpload(file_path, mimetype=mime_type)
+
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     print(f"✅ Success! File ID: {file.get('id')}")
 
 
-# --- MAIN EXECUTION ---
+# --- FUNCTION 3: Local Testing Helper (Optional) ---
+def load_folder_map():
+    # Only used for local testing, not by the bot
+    if os.path.exists('folder_map.json'):
+        with open('folder_map.json', 'r') as f:
+            return json.load(f)
+    return {}
+
+
+# --- MAIN EXECUTION (For Manual Testing Only) ---
 if __name__ == "__main__":
-    # 1. Load Data
+    # This block only runs if you type 'python test_sorting.py' manually
+    print("🧪 Starting Manual Test...")
+
     drive_service = authenticate_drive()
     my_folders = load_folder_map()
 
-    # 2. PICK A TEST FILE
-    # (Put a dummy PDF or Image in your project folder and type its name here)
-    test_file = "test_notes.pdf"
+    test_file = "test_notes.pdf"  # Make sure this file exists!
 
     if not os.path.exists(test_file):
-        print(f"❌ Error: Please put a file named '{test_file}' in your folder to test.")
+        print(f"❌ Error: Create a dummy file named '{test_file}' to test.")
+    elif not my_folders:
+        print("❌ Error: No folder_map.json found. Run the bot setup first.")
     else:
-        # 3. Ask AI
+        # Test the AI
         decision = ask_gemini_to_sort(test_file, my_folders)
-        print(f"🧠 AI Decision: {decision['subject']} -> {decision['unit']}")
+        print(f"🧠 AI Decision: {decision}")
 
-        # 4. Find the Folder ID
+        # Test Upload
         subj = decision['subject']
         unit = decision['unit']
 
-        # Safe lookup
         if subj in my_folders and unit in my_folders[subj]['units']:
-            target_folder_id = my_folders[subj]['units'][unit]
-
-            # 5. Upload
-            upload_to_drive(drive_service, test_file, decision['suggested_filename'], target_folder_id)
+            target_id = my_folders[subj]['units'][unit]
+            upload_to_drive(drive_service, test_file, decision['suggested_filename'], target_id)
         else:
-            print("❌ AI picked a subject/unit that doesn't exist in our map!")
+            print("❌ AI picked a folder that doesn't exist.")
