@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, BackgroundTasks, Response
 from dotenv import load_dotenv
 
 # --- IMPORTS FROM OUR NEW MODULES ---
-from database import get_user, update_user
+from database import get_user, update_user, get_user_by_email
 from syllabus_parser import parse_syllabus_with_gemini
 from folder_creator import build_drive_structure
 from test_sorting import ask_gemini_to_sort, upload_to_drive, authenticate_drive
@@ -14,7 +14,7 @@ from drive_search import search_drive_files
 from test_sorting import parse_search_intent # Or wherever you pasted the function above
 
 from folder_creator import build_drive_structure
-from starlette.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.responses import RedirectResponse
@@ -22,15 +22,31 @@ from fastapi.templating import Jinja2Templates
 from fastapi import UploadFile, File
 import shutil
 
-# Setup Templates
-templates = Jinja2Templates(directory="templates")
-app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
 
-# Add Session Middleware (Encrypts cookies)
-# "secret-key" should be random. In production, use os.getenv("SECRET_KEY")
-app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string")
 
 load_dotenv()
+app = FastAPI()
+
+# 1. KEEP THIS: Required for Google OAuth (to remember user during redirects)
+app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string")
+
+# 2. ADD THIS: Allow React (Port 5173) to talk to Python (Port 8000)
+origins = [
+    "http://localhost:5173",  # Vite (React) default port
+    "http://localhost:3000",  # Just in case
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow GET, POST, PUT, DELETE
+    allow_headers=["*"],
+)
+
 
 # --- CONFIG ---
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -43,73 +59,249 @@ if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
 # --- MEMORY FOR BUTTONS ---
 pending_actions = {}
 
-
-# --- ROUTE 1: SHOW LOGIN PAGE ---
-@app.get("/")
-def home(request: Request):
-    # Check if user is already logged in (has cookie)
-    user_info = request.session.get('user')
-    if user_info:
-        return f"✅ Logged in as: {user_info.get('email')}"
-    return templates.TemplateResponse("login.html", {"request": request})
+from pydantic import BaseModel
 
 
-# --- ROUTE 2: REDIRECT TO GOOGLE
+# 1. Define the Data Model (What React sends to Python)
+class SetupRequest(BaseModel):
+    phone: str
+    subjects: list[str]  # e.g., ["Physics", "Chemistry", "Maths"]
+
+
+# --- ROUTE 1: SMART LOGIN HANDLER ---
 @app.get("/login")
 def login(request: Request):
-    # Get the phone number from the URL (?phone=...)
+    # Check if phone was provided (Door A: Signup)
     phone = request.query_params.get("phone")
 
-    if not phone:
-        return "❌ Error: Missing phone number. Please click the link from WhatsApp again."
+    if phone:
+        # Door A: Signup - We know the phone, save it to session
+        print(f"DEBUG: Signup Request for {phone}")
+        request.session["user_phone"] = phone
+    else:
+        # Door B: Login - We don't know phone yet, will find it later via Email
+        print(f"DEBUG: Direct Login Request (No Phone)")
+        # Clear session just in case
+        if "user_phone" in request.session:
+            del request.session["user_phone"]
 
-    # Save phone in a cookie so we remember it after they come back from Google
-    request.session["user_phone"] = phone
-
+    # Redirect to Google
     client_id = os.getenv("GOOGLE_CLIENT_ID")
-    redirect_uri = "http://localhost:8000/auth/callback"
-    scope = "https://www.googleapis.com/auth/drive"
+    redirect_uri = "http://localhost:8001/auth/callback"
+    scope = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"
+    # Added userinfo.email scope above ^
 
-    url = f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&access_type=offline&prompt=consent"
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&access_type=offline&prompt=select_account"
 
     return RedirectResponse(url)
 
 
-# Import database functions if not already there
-from database import update_user, get_user
-
-
+# --- ROUTE 2: THE CALLBACK (THE BRAIN) ---
 @app.get("/auth/callback")
 def auth_callback(request: Request):
     code = request.query_params.get("code")
-    if not code: return "❌ Error: No code received."
+    session_phone = request.session.get("user_phone")  # Might be None if Door B
 
-    # 1. Exchange Code for Token
+    if not code: return "❌ Error: Missing code."
+
+    # 1. Exchange Code for Tokens
     token_url = "https://oauth2.googleapis.com/token"
     data = {
         "code": code,
         "client_id": os.getenv("GOOGLE_CLIENT_ID"),
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-        "redirect_uri": "http://localhost:8000/auth/callback",
+        "redirect_uri": "http://localhost:8001/auth/callback",
         "grant_type": "authorization_code"
     }
+    response = requests.post(token_url, data=data)
+    new_tokens = response.json()
+    access_token = new_tokens.get("access_token")
 
-    r = requests.post(token_url, data=data)
-    tokens = r.json()
+    # 2. Fetch Google Profile (Get Email)
+    user_info = requests.get(
+        "https://www.googleapis.com/oauth2/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"}
+    ).json()
 
-    # 2. Retrieve the phone number we saved in the cookie
+    google_email = user_info.get("email")
+    user_name = user_info.get("name", "Student")
+    user_pic = user_info.get("picture", "")
+
+    final_phone = None
+
+    # --- LOGIC BRANCHING ---
+
+    if session_phone:
+        # === DOOR A: SIGNUP ===
+        # We have phone in session. We must LINK this email to this phone.
+        print(f"🔗 Linking {google_email} to {session_phone}")
+        update_user(session_phone, "email", google_email)
+        final_phone = session_phone
+    else:
+        # === DOOR B: LOGIN ===
+        # No phone in session. We must LOOK UP the phone using email.
+        print(f"🔍 Looking up user by email: {google_email}")
+        existing_user = get_user_by_email(google_email)
+
+        if existing_user:
+            final_phone = existing_user['phone']
+            # RESTORE SESSION
+            request.session["user_phone"] = final_phone
+
+            # Handle Refresh Token logic for returning user
+            if existing_user.get("google_token"):
+                old_tokens = json.loads(existing_user["google_token"]) if isinstance(existing_user["google_token"],
+                                                                                     str) else existing_user[
+                    "google_token"]
+                if "refresh_token" not in new_tokens:
+                    new_tokens["refresh_token"] = old_tokens.get("refresh_token")
+        else:
+            # Email not found in DB -> They must Signup first
+            return "❌ Account not found. Please go back and enter your phone number to Sign Up first."
+
+    # 3. Save Updates
+    update_user(final_phone, "google_token", new_tokens)
+    update_user(final_phone, "name", user_name)
+    update_user(final_phone, "picture", user_pic)
+    update_user(final_phone, "email", google_email)  # Ensure email is always up to date
+
+    # 4. Redirect based on Status
+    user = get_user(final_phone)
+    status = user.get("status", "NEW")
+
+    if status in ["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE"]:
+        target_url = "http://localhost:5173/dashboard"
+    else:
+        target_url = "http://localhost:5173/verify"
+
+    return RedirectResponse(url=target_url, status_code=303)
+
+@app.post("/api/complete-setup")
+async def complete_setup(data: SetupRequest):
+    print(f"🚀 Starting Setup for {data.phone} with subjects: {data.subjects}")
+
+    # A. Validate User
+    user = get_user(data.phone)
+    if not user:
+        return JSONResponse({"error": "User not found"}, status_code=404)
+
+    # B. Prepare the Folder Structure
+    # We turn the list ["Physics"] into {"Physics": ["Unit 1", "Unit 2"...]}
+    # This is what your Drive function expects.
+    final_syllabus = {
+        subj: ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"]
+        for subj in data.subjects
+    }
+
+    # C. Create Folders in Google Drive
+    try:
+        # NOTE: This function (build_drive_structure) must exist in your code.
+        # It connects to Google Drive and makes the folders.
+        root_id, new_map = build_drive_structure(data.phone, final_syllabus)
+
+        # D. Update Database
+        update_user(data.phone, "folder_map", new_map)
+        update_user(data.phone, "root_folder_id", root_id)
+        update_user(data.phone, "status", "ACTIVE")  # <--- Important! This unlocks the dashboard.
+
+        return {"status": "success"}
+
+    except Exception as e:
+        print(f"❌ Setup Error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/api/dashboard-data")
+def get_dashboard_data(request: Request):
     phone = request.session.get("user_phone")
+    if not phone: return JSONResponse({"error": "Not logged in"}, status_code=401)
 
-    if not phone:
-        return "❌ Error: Session lost. Try clicking the WhatsApp link again."
+    user = get_user(phone)
+    if not user: return JSONResponse({"error": "User not found"}, status_code=404)
 
-    # 3. SAVE TO DATABASE!
-    # We save the entire token JSON (access_token + refresh_token)
-    update_user(phone, "google_token", tokens)
-    update_user(phone, "status", "CONNECTED")  # Update status
+    return {
+        "phone": phone,
+        "name": user.get("name"),
+        "picture": user.get("picture"),
+        "status": user.get("status"),
+        "syllabus": user.get("temp_syllabus_list", {}),
+        "folder_map": user.get("folder_map", {}),
+        # 👇 ADD THIS LINE HERE 👇
+        "root_folder_id": user.get("root_folder_id")
+    }
 
-    # Inside auth_callback function... after saving to DB:
-    return RedirectResponse(url="/dashboard", status_code=303)
+
+@app.get("/api/drive/browse")
+def browse_drive(request: Request, folder_id: str = None):
+    # 1. Auth Check
+    phone = request.session.get("user_phone")
+    user = get_user(phone)
+    if not user or not user.get("google_token"):
+        return JSONResponse({"error": "Auth required"}, 401)
+
+    # 2. Setup Drive Service
+    token_info = user['google_token']
+
+    # --- FIX: Convert String to JSON if needed ---
+    if isinstance(token_info, str):
+        try:
+            token_info = json.loads(token_info)
+        except Exception as e:
+            print(f"❌ Token Parsing Error: {e}")
+            return JSONResponse({"error": "Invalid Token Format"}, 500)
+    # --------------------------------------------
+
+    creds = Credentials(
+        token=token_info['access_token'],
+        refresh_token=token_info.get('refresh_token'),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv("GOOGLE_CLIENT_ID"),
+        client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    )
+    service = build('drive', 'v3', credentials=creds)
+
+    # 3. Determine which folder to look in
+    target_id = folder_id
+    if not target_id:
+        target_id = user.get("root_folder_id")
+
+    if not target_id:
+        return {"folders": [], "files": []}
+
+    try:
+        # 4. Query Drive
+        query = f"'{target_id}' in parents and trashed=false"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, mimeType, webViewLink, iconLink)",
+            orderBy="folder, name"
+        ).execute()
+
+        items = results.get('files', [])
+
+        # 5. Separate logic
+        folders = []
+        files = []
+        for item in items:
+            if item['mimeType'] == 'application/vnd.google-apps.folder':
+                folders.append(item)
+            else:
+                files.append(item)
+
+        return {"folders": folders, "files": files}
+
+    except Exception as e:
+        print(f"Drive API Error: {e}")
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    # 1. Clear the session cookie
+    request.session.clear()
+
+    # 2. Redirect to the Frontend Login Page
+    return RedirectResponse("http://localhost:5173/login")
 
 
 @app.post("/create-folders")
@@ -146,25 +338,6 @@ async def create_folders_web(request: Request):
 
     except Exception as e:
         return f"❌ Error creating folders: {e}"
-
-@app.get("/dashboard")
-def dashboard(request: Request):
-    phone = request.session.get("user_phone")
-    if not phone: return RedirectResponse("/")
-
-    # 1. Get User Data from DB
-    user = get_user(phone)
-
-    # 2. Get the Syllabus List (if it exists)
-    syllabus = user.get("temp_syllabus_list", {})
-    status = user.get("status")
-
-    # 3. Send everything to the HTML template
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "syllabus": syllabus,
-        "status": status
-    })
 
 
 @app.post("/upload-syllabus")
@@ -364,38 +537,69 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
             sender = msg['from']
             msg_type = msg['type']
 
+            # Get current user state
             user = get_user(sender)
-            status = user['status']
+            status = user.get('status', 'NEW')  # Default to NEW if not found
 
-            # --- NEW USER ---
-            if status == "NEW":
-                # 1. GET NGROK URL (Or hardcode it if you know it)
-                # You should put your current Ngrok URL in .env as BASE_URL
-                base_url = os.getenv("BASE_URL", "https://867441fb641f.ngrok-free.app")
-                # 2. Generate the correct Mobile Link
+            # ============================================================
+            # 🚀 NEW: VERIFICATION INTERCEPTOR
+            # This runs BEFORE status checks. If user says "VERIFY", check web login.
+            # ============================================================
+            if msg_type == 'text':
+                text_body = msg['text']['body'].strip().upper()
+
+                if text_body == "VERIFY":
+                    # 1. Check if we have the Google Token (saved from Website Login)
+                    if user and user.get("google_token"):
+                        # SUCCESS: Link confirmed!
+                        # We move them to 'AWAITING_SYLLABUS' so the bot is ready for the PDF.
+                        update_user(sender, "status", "AWAITING_SYLLABUS")
+
+                        send_message(sender, "✅ *Verified Successfully!* \n\n"
+                                             "Your Google Drive is now linked. 🔗\n"
+                                             "📄 Please *upload your Syllabus PDF* now, and I will create your folders.")
+                    else:
+                        # FAILURE: They haven't logged in on the web yet
+                        send_message(sender, "⚠️ *Verification Failed* \n\n"
+                                             "I don't see a Google Login for this number yet.\n"
+                                             "1. Go to your Dashboard on the website.\n"
+                                             "2. Login with Google.\n"
+                                             "3. Come back here and send *VERIFY* again.")
+
+                    # Stop processing other blocks
+                    return "OK"
+            # ============================================================
+
+            # --- STATUS 1: NEW USER ---
+            if status == "NEW" or status == "AWAITING_LOGIN":
+                # 1. Get Base URL (Use your ngrok/production URL)
+                base_url = "https://d1b0523fdb99.ngrok-free.app/"  # <--- REPLACE THIS or use os.getenv("BASE_URL")
+
+                # 2. Generate Link
                 link = f"{base_url}/login?phone={sender}"
 
-                # 3. Send a Clean Message with a Link Preview
-                msg = (
+                msg_text = (
                     "👋 *Welcome to DocOrganizer!* \n\n"
-                    "I can organize your files automatically, but first I need permission to access your Google Drive.\n\n"
-                    f"👇 *Tap here to Connect:*\n{link}"
+                    "I can organize your WhatsApp files into Google Drive automatically.\n\n"
+                    "👇 *Tap here to Connect your Account:*\n"
+                    f"{link}"
                 )
-                # Use standard send_message, but ensure 'preview_url' is enabled (default is usually yes)
-                send_message(sender, msg)
+                send_message(sender, msg_text)
                 update_user(sender, "status", "AWAITING_LOGIN")
 
-            # --- SETUP: AWAITING SYLLABUS ---
+            # --- STATUS 2: AWAITING SYLLABUS ---
             elif status == "AWAITING_SYLLABUS":
                 if msg_type in ['document', 'image']:
                     media_id = msg[msg_type]['id']
                     ext = ".pdf" if msg_type == "document" else ".jpg"
                     temp = f"syllabus_{sender}{ext}"
+
+                    send_message(sender, "⏳ Processing your syllabus... please wait.")
                     background_tasks.add_task(handle_syllabus_setup, media_id, sender, temp)
                 else:
-                    send_message(sender, "⚠️ Please send a PDF/Image of your syllabus.")
+                    send_message(sender, "⚠️ Please send a *PDF or Image* of your syllabus.")
 
-            # --- SETUP: EDITING LIST ---
+            # --- STATUS 3: EDITING LIST ---
             elif status == "EDITING_LIST":
                 if msg_type == 'interactive':
                     btn_id = msg['interactive']['button_reply']['id']
@@ -404,30 +608,33 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
 
                 elif msg_type == 'text':
                     text = msg['text']['body'].strip()
-                    current_list = user['temp_syllabus_list']
+                    current_list = user.get('temp_syllabus_list', {})
 
                     if text.lower() == "confirm":
                         background_tasks.add_task(create_user_folders, sender)
                     elif text.lower().startswith("add "):
                         new_subj = text[4:].strip()
+                        # Default units structure
                         current_list[new_subj] = ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"]
                         update_user(sender, "temp_syllabus_list", current_list)
-                        send_message(sender, f"✅ Added {new_subj}. Reply 'Confirm' when done.")
+                        send_message(sender, f"✅ Added *{new_subj}*. \nReply 'Confirm' when done.")
                     elif text.lower().startswith("remove "):
                         rem_subj = text[7:].strip()
+                        # Case-insensitive removal
                         found = next((k for k in current_list if rem_subj.lower() in k.lower()), None)
                         if found:
                             del current_list[found]
                             update_user(sender, "temp_syllabus_list", current_list)
-                            send_message(sender, f"🗑️ Removed {found}.")
+                            send_message(sender, f"🗑️ Removed *{found}*.")
                         else:
-                            send_message(sender, "⚠️ Subject not found.")
+                            send_message(sender, "⚠️ Subject not found in list.")
+                    else:
+                        send_message(sender, "Reply 'Add [Subject]', 'Remove [Subject]', or 'Confirm'.")
 
-            # --- ACTIVE USER (SORTING) ---
+            # --- STATUS 4: ACTIVE USER (SORTING) ---
             elif status == "ACTIVE":
                 if msg_type == 'text':
                     text_body = msg['text']['body']
-                    user = get_user(sender)
                     my_folders = user.get("folder_map", {})
 
                     # 1. Ask Gemini: Is this a search?
@@ -435,29 +642,21 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
 
                     if analysis.get("is_search"):
                         subj = analysis.get("subject")
-
                         if subj in my_folders:
-                            # Get the Subject Folder ID
-                            # (Or you can go deeper into Units if Gemini is smart enough)
                             target_id = my_folders[subj]['id']
-
                             send_message(sender, f"🔍 Searching in *{subj}*...")
 
-                            # 2. Search Drive
-                            files = search_drive_files(target_id,sender)
-
+                            files = search_drive_files(target_id, sender)  # Ensure this function accepts sender/auth
                             if files:
                                 response_msg = f"📂 **Files found in {subj}:**\n\n"
                                 for f in files:
                                     response_msg += f"📄 {f['name']}\n🔗 {f['webViewLink']}\n\n"
                                 send_message(sender, response_msg)
                             else:
-                                send_message(sender, f"❌ No files found in the {subj} folder.")
+                                send_message(sender, f"❌ No files found in {subj}.")
                         else:
                             send_message(sender, "⚠️ I couldn't match that to a folder in your syllabus.")
-
                     else:
-                        # Fallback for non-search chat
                         send_message(sender, "Send me a file to save, or ask me 'Get Physics notes'!")
 
                 elif msg_type in ['document', 'image']:
@@ -467,53 +666,50 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                         ext = ".pdf"
 
                     temp = f"file_{sender}{ext}"
-                    send_message(sender, "🤖 Analyzing...")
+                    send_message(sender, "🤖 Analyzing document...")
                     background_tasks.add_task(process_file_background, media_id, sender, temp)
 
-                # HANDLE SAVE/DISCARD CLICKS
+                # HANDLE BUTTON CLICKS (Save/Discard)
                 elif msg_type == 'interactive':
                     btn_id = msg['interactive']['button_reply']['id']
                     if sender in pending_actions:
                         action = pending_actions[sender]
+
                         if btn_id == "save_file":
-                            send_message(sender, "🚀 Uploading...")
+                            send_message(sender, "🚀 Uploading to Drive...")
                             try:
                                 drive_service = authenticate_drive(sender)
                                 upload_to_drive(drive_service, action['local_path'], action['new_name'],
                                                 action['drive_folder_id'])
                                 send_message(sender, f"✅ Saved to *{action['subject']}*")
                             except Exception as e:
-                                send_message(sender, f"❌ Upload failed: {e}")
+                                send_message(sender, f"❌ Upload failed: {str(e)}")
 
-                                # --- SAFE CLEANUP FIX ---
+                            # Cleanup
                             try:
-                                time.sleep(1)  # Wait 1s for Windows to release the file
                                 if os.path.exists(action['local_path']):
                                     os.remove(action['local_path'])
-                            except Exception as cleanup_error:
-                                print(f"⚠️ Could not delete temp file (locked): {cleanup_error}")
-                                # ------------------------
-
+                            except:
+                                pass
                             del pending_actions[sender]
 
                         elif btn_id == "discard_file":
                             send_message(sender, "🚫 Discarded.")
-
-                            # --- SAFE CLEANUP FIX ---
                             try:
-                                time.sleep(1)
                                 if os.path.exists(action['local_path']):
                                     os.remove(action['local_path'])
-                            except Exception as cleanup_error:
-                                print(f"⚠️ Could not delete temp file (locked): {cleanup_error}")
-                            # ------------------------
-
+                            except:
+                                pass
                             del pending_actions[sender]
 
-    except KeyError:
+    except KeyError as e:
+        print(f"Webhook Error (KeyError): {e}")
         pass
-    return "OK"
+    except Exception as e:
+        print(f"Webhook Error (General): {e}")
+        pass
 
+    return "OK"
 
 # --- VERIFY WEBHOOK ---
 @app.get("/webhook")

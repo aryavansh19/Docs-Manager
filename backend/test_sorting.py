@@ -1,4 +1,3 @@
-import json
 import os
 import google.generativeai as genai
 from googleapiclient.http import MediaFileUpload
@@ -104,8 +103,8 @@ def upload_to_drive(service, file_path, filename, folder_id):
 # --- FUNCTION 3: Local Testing Helper (Optional) ---
 def load_folder_map():
     # Only used for local testing, not by the bot
-    if os.path.exists('folder_map.json'):
-        with open('folder_map.json', 'r') as f:
+    if os.path.exists('../folder_map.json'):
+        with open('../folder_map.json', 'r') as f:
             return json.load(f)
     return {}
 
