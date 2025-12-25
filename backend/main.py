@@ -67,6 +67,62 @@ class SetupRequest(BaseModel):
     phone: str
     subjects: list[str]  # e.g., ["Physics", "Chemistry", "Maths"]
 
+# --- HELPER: Send Text ---
+def send_message(to, text):
+    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    requests.post(url, headers=headers, json={
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": text}
+    })
+
+
+# --- HELPER: Send Buttons ---
+def send_buttons(to, text, buttons):
+    """
+    buttons = [{"id": "yes", "title": "Save"}, {"id": "no", "title": "Discard"}]
+    """
+    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    button_actions = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"]}} for b in buttons]
+
+    data = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": text},
+            "action": {"buttons": button_actions}
+        }
+    }
+    requests.post(url, headers=headers, json=data)
+
+
+# --- HELPER: Download Media ---
+def download_media(media_id, filename):
+    try:
+        url_info = f"https://graph.facebook.com/v17.0/{media_id}"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+        r = requests.get(url_info, headers=headers)
+        media_url = r.json().get('url')
+
+        r_media = requests.get(media_url, headers=headers)
+        if r_media.status_code == 200:
+            with open(filename, 'wb') as f:
+                f.write(r_media.content)
+            return True
+    except:
+        return False
+
 
 # --- ROUTE 1: SMART LOGIN HANDLER ---
 @app.get("/login")
@@ -117,7 +173,7 @@ def auth_callback(request: Request):
     new_tokens = response.json()
     access_token = new_tokens.get("access_token")
 
-    # 2. Fetch Google Profile (Get Email)
+    # 2. Fetch Google Profile
     user_info = requests.get(
         "https://www.googleapis.com/oauth2/v1/userinfo",
         headers={"Authorization": f"Bearer {access_token}"}
@@ -133,13 +189,17 @@ def auth_callback(request: Request):
 
     if session_phone:
         # === DOOR A: SIGNUP ===
-        # We have phone in session. We must LINK this email to this phone.
         print(f"🔗 Linking {google_email} to {session_phone}")
         update_user(session_phone, "email", google_email)
         final_phone = session_phone
+
+        # # [CHANGE 1] Upgrade status so they don't get stuck in 'NEW'
+        # current_user = get_user(session_phone)
+        # if current_user.get("status") in ["NEW", "VERIFIED"]:
+        #     update_user(session_phone, "status", "CONNECTED")
+
     else:
         # === DOOR B: LOGIN ===
-        # No phone in session. We must LOOK UP the phone using email.
         print(f"🔍 Looking up user by email: {google_email}")
         existing_user = get_user_by_email(google_email)
 
@@ -148,33 +208,42 @@ def auth_callback(request: Request):
             # RESTORE SESSION
             request.session["user_phone"] = final_phone
 
-            # Handle Refresh Token logic for returning user
+            # Handle Refresh Token logic
             if existing_user.get("google_token"):
+                # Handle case where token might be stored as string or dict
                 old_tokens = json.loads(existing_user["google_token"]) if isinstance(existing_user["google_token"],
                                                                                      str) else existing_user[
                     "google_token"]
+
                 if "refresh_token" not in new_tokens:
                     new_tokens["refresh_token"] = old_tokens.get("refresh_token")
         else:
-            # Email not found in DB -> They must Signup first
             return "❌ Account not found. Please go back and enter your phone number to Sign Up first."
 
     # 3. Save Updates
     update_user(final_phone, "google_token", new_tokens)
     update_user(final_phone, "name", user_name)
     update_user(final_phone, "picture", user_pic)
-    update_user(final_phone, "email", google_email)  # Ensure email is always up to date
+    update_user(final_phone, "email", google_email)
 
-    # 4. Redirect based on Status
+    # 4. Redirect based on Status [CHANGE 2: UPDATED LOGIC]
     user = get_user(final_phone)
     status = user.get("status", "NEW")
 
-    if status in ["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE"]:
+    if status == "ACTIVE":
+        # User is fully set up, go to Dashboard
         target_url = "http://localhost:5173/dashboard"
+
+    elif status in ["CONNECTED", "AWAITING_SYLLABUS"]:
+        # User has linked Google but hasn't set up folders/syllabus
+        target_url = "http://localhost:5173/setup"
+
     else:
+        # User is likely still in verification stage or error
         target_url = "http://localhost:5173/verify"
 
     return RedirectResponse(url=target_url, status_code=303)
+
 
 @app.post("/api/complete-setup")
 async def complete_setup(data: SetupRequest):
@@ -304,25 +373,35 @@ def logout(request: Request):
     return RedirectResponse("http://localhost:5173/login")
 
 
+import json  # Make sure this is imported at the top
+
 @app.post("/create-folders")
 async def create_folders_web(request: Request):
     phone = request.session.get("user_phone")
     if not phone: return RedirectResponse("/")
 
-    # 1. Get the Form Data (Which subjects did they check?)
+    # 1. Get the Form Data
     form = await request.form()
-    selected_subjects = form.getlist("selected_subjects")  # List of subject names
+    selected_subjects = form.getlist("selected_subjects")
 
     # 2. Get the full syllabus from DB
     user = get_user(phone)
     full_syllabus = user.get("temp_syllabus_list", {})
 
-    # 3. Filter the list (Keep only selected subjects)
+    # --- FIX STARTS HERE ---
+    # If database returned a string (JSON), convert it to a Dictionary
+    if isinstance(full_syllabus, str):
+        try:
+            full_syllabus = json.loads(full_syllabus)
+        except json.JSONDecodeError:
+            print("❌ Error: stored syllabus is not valid JSON")
+            full_syllabus = {}
+    # --- FIX ENDS HERE ---
+
+    # 3. Filter the list
     final_syllabus = {k: v for k, v in full_syllabus.items() if k in selected_subjects}
 
-    # 4. BUILD THE FOLDERS (Using your existing logic!)
-    # Note: build_drive_structure usually takes ~10-20 seconds.
-    # For a pro website, use BackgroundTasks. For now, we wait.
+    # 4. BUILD THE FOLDERS
     try:
         root_id, new_map = build_drive_structure(phone, final_syllabus)
 
@@ -337,138 +416,33 @@ async def create_folders_web(request: Request):
         return "🎉 Success! You can close this page and go back to WhatsApp."
 
     except Exception as e:
+        print(f"Folder creation error: {e}") # helpful for debugging
         return f"❌ Error creating folders: {e}"
 
+
+from fastapi.responses import JSONResponse # Import this at top
 
 @app.post("/upload-syllabus")
 async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
     phone = request.session.get("user_phone")
-    if not phone: return RedirectResponse("/")
+    if not phone: return JSONResponse({"error": "Not logged in"}, status_code=401)
 
-    # 1. Save the file temporarily
+    # 1. Save file locally
     temp_filename = f"syllabus_{phone}.pdf"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # 2. Parse with Gemini
-    subjects = parse_syllabus_with_gemini(temp_filename)
+    # 2. Parse (Assuming returns dict: {"Maths": [...], "Physics": [...]})
+    subjects_data = parse_syllabus_with_gemini(temp_filename)
 
-    # 3. Save to DB and Update Status
-    update_user(phone, "temp_syllabus_list", subjects)
+    # 3. Save to DB
+    update_user(phone, "temp_syllabus_list", subjects_data)
     update_user(phone, "status", "EDITING_LIST")
 
-    # --- FIX: Redirect back to dashboard instead of returning text ---
-    return RedirectResponse(url="/dashboard", status_code=303)
+    # --- CHANGE: Return JSON so Frontend can display the list ---
+    # We return just the list of subject names (keys)
+    return JSONResponse(content={"subjects": list(subjects_data.keys())})
 
-
-# --- HELPER: Send Text ---
-def send_message(to, text):
-    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    requests.post(url, headers=headers, json={
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text}
-    })
-
-
-# --- HELPER: Send Buttons ---
-def send_buttons(to, text, buttons):
-    """
-    buttons = [{"id": "yes", "title": "Save"}, {"id": "no", "title": "Discard"}]
-    """
-    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    button_actions = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"]}} for b in buttons]
-
-    data = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": text},
-            "action": {"buttons": button_actions}
-        }
-    }
-    requests.post(url, headers=headers, json=data)
-
-
-# --- HELPER: Download Media ---
-def download_media(media_id, filename):
-    try:
-        url_info = f"https://graph.facebook.com/v17.0/{media_id}"
-        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-        r = requests.get(url_info, headers=headers)
-        media_url = r.json().get('url')
-
-        r_media = requests.get(media_url, headers=headers)
-        if r_media.status_code == 200:
-            with open(filename, 'wb') as f:
-                f.write(r_media.content)
-            return True
-    except:
-        return False
-
-
-# ==========================================
-# 🧠 LOGIC 1: SYLLABUS SETUP (Phase 2)
-# ==========================================
-def handle_syllabus_setup(media_id, sender, temp_filename):
-    send_message(sender, "🧐 Reading your syllabus... (This takes ~10s)")
-
-    if download_media(media_id, temp_filename):
-        subjects = parse_syllabus_with_gemini(temp_filename)
-
-        if subjects:
-            update_user(sender, "temp_syllabus_list", subjects)
-            update_user(sender, "status", "EDITING_LIST")
-
-            msg = "✅ **Analysis Complete!**\nI found these subjects:\n\n"
-            for subject, units in subjects.items():
-                msg += f"📂 *{subject}* ({len(units)} units)\n"
-
-            msg += "\n👇 **What next?**\n- Reply *'Add [Subject]'*\n- Reply *'Remove [Subject]'*\n- Click Confirm below."
-
-            send_buttons(sender, msg, [{"id": "setup_confirm", "title": "✅ Confirm"}])
-        else:
-            send_message(sender, "❌ I couldn't read that file. Try a clearer PDF.")
-    else:
-        send_message(sender, "❌ Download failed.")
-
-
-# ==========================================
-# 🏗️ LOGIC 2: CREATE FOLDERS (Phase 4)
-# ==========================================
-def create_user_folders(sender):
-    user = get_user(sender)
-    final_list = user.get("temp_syllabus_list", {})
-
-    if not final_list:
-        send_message(sender, "❌ Error: Session expired. Upload syllabus again.")
-        return
-
-    send_message(sender, "🚀 Creating folders in Google Drive... (Wait ~20s)")
-
-    try:
-        root_id, new_map = build_drive_structure(sender, final_list)
-
-        update_user(sender, "folder_map", new_map)
-        update_user(sender, "root_folder_id", root_id)
-        update_user(sender, "status", "ACTIVE")
-
-        send_message(sender,
-                     "✅ **Setup Complete!**\n\nI created 'Smart Docs' in your Drive.\n👉 Send me a PDF notes file now!")
-    except Exception as e:
-        print(f"Build Error: {e}")
-        send_message(sender, "❌ Creating folders failed.")
 
 
 # ==========================================
@@ -483,19 +457,32 @@ def process_file_background(media_id, sender, temp_filename):
             user = get_user(sender)
             my_folders = user.get("folder_map", {})
 
+            # ==========================================
+            # 🛠️ THE FIX: Convert String -> Dictionary
+            # ==========================================
+            if isinstance(my_folders, str):
+                try:
+                    my_folders = json.loads(my_folders)
+                except json.JSONDecodeError:
+                    print("❌ Error: Invalid JSON in folder_map")
+                    my_folders = {}
+            # ==========================================
+
             if not my_folders:
-                send_message(sender, "⚠️ Setup not found. Send 'Hi' to restart.")
+                send_message(sender, "⚠️ Setup not found. Go to the dashboard to create folders.")
                 return
 
             # 2. Ask Gemini to Sort
+            # Now 'my_folders' is a valid dictionary, so .items() will work inside this function
             decision = ask_gemini_to_sort(temp_filename, my_folders)
 
-            subj = decision['subject']
-            unit = decision['unit']
-            new_name = decision['suggested_filename']
+            subj = decision.get('subject')
+            unit = decision.get('unit')
+            new_name = decision.get('suggested_filename')
 
             # 3. Check & Prepare
-            if subj in my_folders and unit in my_folders[subj]['units']:
+            # We use .get() to prevent crashing if keys don't exist
+            if subj in my_folders and unit in my_folders[subj].get('units', {}):
                 folder_id = my_folders[subj]['units'][unit]
 
                 # Save state for button click
@@ -517,12 +504,12 @@ def process_file_background(media_id, sender, temp_filename):
                 send_message(sender, f"⚠️ AI identified '{subj}', but it's not in your syllabus folders.")
 
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error in process_file: {e}")
+            import traceback
+            traceback.print_exc() # This will print the exact line number of the error
             send_message(sender, "❌ Error analyzing file.")
     else:
         send_message(sender, "❌ Failed to download file.")
-
-
 # ==========================================
 # 👂 WEBHOOK LISTENER
 # ==========================================
@@ -539,105 +526,72 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
 
             # Get current user state
             user = get_user(sender)
-            status = user.get('status', 'NEW')  # Default to NEW if not found
+            status = user.get('status', 'NEW')
 
             # ============================================================
-            # 🚀 NEW: VERIFICATION INTERCEPTOR
-            # This runs BEFORE status checks. If user says "VERIFY", check web login.
+            # 🚀 1. VERIFICATION INTERCEPTOR (Keep this)
             # ============================================================
             if msg_type == 'text':
                 text_body = msg['text']['body'].strip().upper()
-
                 if text_body == "VERIFY":
-                    # 1. Check if we have the Google Token (saved from Website Login)
                     if user and user.get("google_token"):
-                        # SUCCESS: Link confirmed!
-                        # We move them to 'AWAITING_SYLLABUS' so the bot is ready for the PDF.
-                        update_user(sender, "status", "AWAITING_SYLLABUS")
-
-                        send_message(sender, "✅ *Verified Successfully!* \n\n"
-                                             "Your Google Drive is now linked. 🔗\n"
-                                             "📄 Please *upload your Syllabus PDF* now, and I will create your folders.")
+                        # If they are verified, we check if they finished setup
+                        if user.get("root_folder_id"):
+                            update_user(sender, "status", "ACTIVE")
+                            send_message(sender, "✅ *You are ready!* Send me a file to organize.")
+                        else:
+                            # They are verified but haven't run the wizard
+                            update_user(sender, "status", "CONNECTED")
+                            send_message(sender, "✅ *Linked Successfully!* \n\n"
+                                                 "👉 Now please go to the dashboard to **Upload your Syllabus** and setup folders:\n"
+                                                 "http://localhost:5173/setup")
                     else:
-                        # FAILURE: They haven't logged in on the web yet
-                        send_message(sender, "⚠️ *Verification Failed* \n\n"
-                                             "I don't see a Google Login for this number yet.\n"
-                                             "1. Go to your Dashboard on the website.\n"
-                                             "2. Login with Google.\n"
-                                             "3. Come back here and send *VERIFY* again.")
-
-                    # Stop processing other blocks
+                        send_message(sender,
+                                     "⚠️ *Verification Failed* \nLogin on the website first, then type VERIFY here.")
                     return "OK"
+
+            # ============================================================
+            # 🚦 2. STATUS HANDLER
             # ============================================================
 
-            # --- STATUS 1: NEW USER ---
+            # --- CASE A: NEW USER (Needs to Login) ---
             if status == "NEW" or status == "AWAITING_LOGIN":
-                # 1. Get Base URL (Use your ngrok/production URL)
-                base_url = "https://d1b0523fdb99.ngrok-free.app/"  # <--- REPLACE THIS or use os.getenv("BASE_URL")
-
-                # 2. Generate Link
+                # Use your ngrok URL here
+                base_url = "https://your-ngrok-url.ngrok-free.app"
                 link = f"{base_url}/login?phone={sender}"
 
-                msg_text = (
-                    "👋 *Welcome to DocOrganizer!* \n\n"
-                    "I can organize your WhatsApp files into Google Drive automatically.\n\n"
-                    "👇 *Tap here to Connect your Account:*\n"
-                    f"{link}"
-                )
-                send_message(sender, msg_text)
+                send_message(sender,
+                             "👋 *Welcome to DocOrganizer!* \n\n"
+                             "Tap below to connect Google Drive & Setup Folders:\n"
+                             f"{link}"
+                             )
                 update_user(sender, "status", "AWAITING_LOGIN")
 
-            # --- STATUS 2: AWAITING SYLLABUS ---
-            elif status == "AWAITING_SYLLABUS":
-                if msg_type in ['document', 'image']:
-                    media_id = msg[msg_type]['id']
-                    ext = ".pdf" if msg_type == "document" else ".jpg"
-                    temp = f"syllabus_{sender}{ext}"
+            # --- CASE B: PENDING SETUP (Needs to finish Website Wizard) ---
+            # This handles users who logged in but didn't finish the Setup Screen
+            elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
+                send_message(sender,
+                             "⏳ *Setup Incomplete* \n\n"
+                             "Please finish setting up your subjects on the dashboard:\n"
+                             "👉 http://localhost:5173/setup"
+                             )
 
-                    send_message(sender, "⏳ Processing your syllabus... please wait.")
-                    background_tasks.add_task(handle_syllabus_setup, media_id, sender, temp)
-                else:
-                    send_message(sender, "⚠️ Please send a *PDF or Image* of your syllabus.")
-
-            # --- STATUS 3: EDITING LIST ---
-            elif status == "EDITING_LIST":
-                if msg_type == 'interactive':
-                    btn_id = msg['interactive']['button_reply']['id']
-                    if btn_id == "setup_confirm":
-                        background_tasks.add_task(create_user_folders, sender)
-
-                elif msg_type == 'text':
-                    text = msg['text']['body'].strip()
-                    current_list = user.get('temp_syllabus_list', {})
-
-                    if text.lower() == "confirm":
-                        background_tasks.add_task(create_user_folders, sender)
-                    elif text.lower().startswith("add "):
-                        new_subj = text[4:].strip()
-                        # Default units structure
-                        current_list[new_subj] = ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"]
-                        update_user(sender, "temp_syllabus_list", current_list)
-                        send_message(sender, f"✅ Added *{new_subj}*. \nReply 'Confirm' when done.")
-                    elif text.lower().startswith("remove "):
-                        rem_subj = text[7:].strip()
-                        # Case-insensitive removal
-                        found = next((k for k in current_list if rem_subj.lower() in k.lower()), None)
-                        if found:
-                            del current_list[found]
-                            update_user(sender, "temp_syllabus_list", current_list)
-                            send_message(sender, f"🗑️ Removed *{found}*.")
-                        else:
-                            send_message(sender, "⚠️ Subject not found in list.")
-                    else:
-                        send_message(sender, "Reply 'Add [Subject]', 'Remove [Subject]', or 'Confirm'.")
-
-            # --- STATUS 4: ACTIVE USER (SORTING) ---
+            # --- CASE C: ACTIVE USER (The Main Bot) ---
             elif status == "ACTIVE":
+
+                # 1. TEXT MESSAGE -> SEARCH INTENT
                 if msg_type == 'text':
                     text_body = msg['text']['body']
                     my_folders = user.get("folder_map", {})
 
-                    # 1. Ask Gemini: Is this a search?
+                    if isinstance(my_folders, str):
+                        try:
+                            my_folders = json.loads(my_folders)
+                        except json.JSONDecodeError:
+                            print("❌ Error: Invalid JSON in folder_map")
+                            my_folders = {}
+
+                    # Ask Gemini: Is this a search?
                     analysis = parse_search_intent(text_body, my_folders)
 
                     if analysis.get("is_search"):
@@ -646,7 +600,9 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                             target_id = my_folders[subj]['id']
                             send_message(sender, f"🔍 Searching in *{subj}*...")
 
-                            files = search_drive_files(target_id, sender)  # Ensure this function accepts sender/auth
+                            # Assuming you have this helper function
+                            files = search_drive_files(target_id, sender)
+
                             if files:
                                 response_msg = f"📂 **Files found in {subj}:**\n\n"
                                 for f in files:
@@ -655,23 +611,34 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                             else:
                                 send_message(sender, f"❌ No files found in {subj}.")
                         else:
-                            send_message(sender, "⚠️ I couldn't match that to a folder in your syllabus.")
+                            send_message(sender, "⚠️ Subject folder not found.")
                     else:
-                        send_message(sender, "Send me a file to save, or ask me 'Get Physics notes'!")
+                        send_message(sender, "📤 Send me a file to save, or ask 'Get Physics notes'.")
 
+                # 2. FILE MESSAGE -> SORTING INTENT
                 elif msg_type in ['document', 'image']:
                     media_id = msg[msg_type]['id']
-                    ext = ".pdf" if msg_type == "document" else ".jpg"
-                    if msg_type == 'document' and "pdf" in msg['document'].get('mime_type', ''):
-                        ext = ".pdf"
 
-                    temp = f"file_{sender}{ext}"
+                    # Determine extension
+                    ext = ".jpg"
+                    if msg_type == 'document':
+                        mime = msg['document'].get('mime_type', '')
+                        if "pdf" in mime:
+                            ext = ".pdf"
+                        elif "word" in mime:
+                            ext = ".docx"
+
+                    temp_filename = f"file_{sender}{ext}"
+
                     send_message(sender, "🤖 Analyzing document...")
-                    background_tasks.add_task(process_file_background, media_id, sender, temp)
+                    # This background task handles the AI sorting logic
+                    background_tasks.add_task(process_file_background, media_id, sender, temp_filename)
 
-                # HANDLE BUTTON CLICKS (Save/Discard)
+                # 3. BUTTON CLICKS (Save/Discard)
                 elif msg_type == 'interactive':
                     btn_id = msg['interactive']['button_reply']['id']
+
+                    # Check if user has a pending file action in memory
                     if sender in pending_actions:
                         action = pending_actions[sender]
 
@@ -683,33 +650,22 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                                                 action['drive_folder_id'])
                                 send_message(sender, f"✅ Saved to *{action['subject']}*")
                             except Exception as e:
-                                send_message(sender, f"❌ Upload failed: {str(e)}")
+                                send_message(sender, f"❌ Upload failed: {e}")
 
-                            # Cleanup
-                            try:
-                                if os.path.exists(action['local_path']):
-                                    os.remove(action['local_path'])
-                            except:
-                                pass
+                            # Cleanup file
+                            if os.path.exists(action['local_path']): os.remove(action['local_path'])
                             del pending_actions[sender]
 
                         elif btn_id == "discard_file":
                             send_message(sender, "🚫 Discarded.")
-                            try:
-                                if os.path.exists(action['local_path']):
-                                    os.remove(action['local_path'])
-                            except:
-                                pass
+                            if os.path.exists(action['local_path']): os.remove(action['local_path'])
                             del pending_actions[sender]
 
-    except KeyError as e:
-        print(f"Webhook Error (KeyError): {e}")
-        pass
     except Exception as e:
-        print(f"Webhook Error (General): {e}")
-        pass
+        print(f"Webhook Error: {e}")
 
     return "OK"
+
 
 # --- VERIFY WEBHOOK ---
 @app.get("/webhook")
