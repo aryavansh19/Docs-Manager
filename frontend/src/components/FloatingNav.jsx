@@ -15,7 +15,7 @@ export default function FloatingNav() {
     };
 
     // Hide Nav on Dashboard and Login pages
-    if (location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/auth') || location.pathname.startsWith('/login') || location.pathname.startsWith('/signup')) {
+    if (location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/auth') || location.pathname.startsWith('/login') || location.pathname.startsWith('/signup') || location.pathname.startsWith('/setup') || location.pathname.startsWith('/verify') || location.pathname.startsWith('/create')) {
         return null;
     }
 

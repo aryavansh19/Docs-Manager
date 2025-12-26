@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 # --- IMPORTS FROM OUR NEW MODULES ---
 from database import get_user, update_user, get_user_by_email
 from syllabus_parser import parse_syllabus_with_gemini
-from folder_creator import build_drive_structure
 from test_sorting import ask_gemini_to_sort, upload_to_drive, authenticate_drive
 from drive_search import search_drive_files
 from test_sorting import parse_search_intent # Or wherever you pasted the function above
@@ -373,55 +372,158 @@ def logout(request: Request):
     return RedirectResponse("http://localhost:5173/login")
 
 
-import json  # Make sure this is imported at the top
+def append_folders_to_drive(phone, root_folder_id, new_structure):
+    """
+    Creates ONLY the folders in 'new_structure' inside the EXISTING 'root_folder_id'.
+    Returns a dictionary of the newly created folders.
+    """
+
+    # 1. USE YOUR EXISTING AUTH FUNCTION
+    # This returns the 'service' object directly
+    service = authenticate_drive(phone)
+
+    created_map = {}
+    print(f"📂 Appending to Root ID: {root_folder_id}")
+
+    for subject_name, units in new_structure.items():
+        try:
+            # 2. Create Subject Folder
+            file_metadata = {
+                'name': subject_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [root_folder_id]
+            }
+            subject_folder = service.files().create(body=file_metadata, fields='id').execute()
+            subject_id = subject_folder.get('id')
+
+            # 3. Add to local map (to save to DB later)
+            created_map[subject_name] = {
+                "id": subject_id,
+                "units": {}
+            }
+
+            # 4. Create Unit Subfolders
+            for unit_name in units:
+                unit_metadata = {
+                    'name': unit_name,
+                    'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [subject_id]
+                }
+                unit_folder = service.files().create(body=unit_metadata, fields='id').execute()
+                created_map[subject_name]["units"][unit_name] = unit_folder.get('id')
+
+            print(f"✅ Created {subject_name}")
+
+        except Exception as e:
+            print(f"❌ Failed to create {subject_name}: {e}")
+
+    return created_map
+
+
 
 @app.post("/create-folders")
 async def create_folders_web(request: Request):
     phone = request.session.get("user_phone")
     if not phone: return RedirectResponse("/")
 
-    # 1. Get the Form Data
+    # 1. Get Inputs
     form = await request.form()
-    selected_subjects = form.getlist("selected_subjects")
+    selected_subjects = form.getlist("selected_subjects")  # List of subjects to create
 
-    # 2. Get the full syllabus from DB
+    # 2. Get User Data
     user = get_user(phone)
-    full_syllabus = user.get("temp_syllabus_list", {})
+    root_id = user.get("root_folder_id")
 
-    # --- FIX STARTS HERE ---
-    # If database returned a string (JSON), convert it to a Dictionary
-    if isinstance(full_syllabus, str):
+    # Load Syllabus Data (to get units)
+    full_syllabus_str = user.get("temp_syllabus_list", "{}")
+    full_syllabus = {}
+    if isinstance(full_syllabus_str, str):
         try:
-            full_syllabus = json.loads(full_syllabus)
-        except json.JSONDecodeError:
-            print("❌ Error: stored syllabus is not valid JSON")
+            full_syllabus = json.loads(full_syllabus_str)
+        except:
             full_syllabus = {}
-    # --- FIX ENDS HERE ---
+    elif isinstance(full_syllabus_str, dict):
+        full_syllabus = full_syllabus_str
 
-    # 3. Filter the list
-    final_syllabus = {k: v for k, v in full_syllabus.items() if k in selected_subjects}
+    # Load Existing Map (to avoid duplicates or data loss)
+    existing_map_str = user.get("folder_map", "{}")
+    existing_map = {}
+    if isinstance(existing_map_str, str):
+        try:
+            existing_map = json.loads(existing_map_str)
+        except:
+            existing_map = {}
+    elif isinstance(existing_map_str, dict):
+        existing_map = existing_map_str
 
-    # 4. BUILD THE FOLDERS
-    try:
-        root_id, new_map = build_drive_structure(phone, final_syllabus)
+    # ======================================================
+    # 🛑 MODE 1: APPEND (If Root Folder Exists)
+    # ======================================================
+    if root_id:
+        print("🔄 Mode: APPEND (Adding to existing workspace)")
 
-        # 5. Save Final State
-        update_user(phone, "folder_map", new_map)
-        update_user(phone, "root_folder_id", root_id)
-        update_user(phone, "status", "ACTIVE")
+        # Build structure ONLY for the selected subjects
+        structure_to_add = {}
+        for subj in selected_subjects:
+            # Skip if folder already exists in DB map
+            if subj in existing_map:
+                print(f"⚠️ Skipping {subj}, already exists.")
+                continue
+            structure_to_add[subj] = full_syllabus.get(subj, [])
 
-        # 6. Notify on WhatsApp
-        send_message(phone, "✅ **Setup Complete!**\nYour folders are ready. Send me a file now!")
+        if not structure_to_add:
+            return JSONResponse({"status": "success", "message": "No new folders to create."})
 
-        return "🎉 Success! You can close this page and go back to WhatsApp."
+        # Call the Helper
+        newly_created_map = append_folders_to_drive(phone, root_id, structure_to_add)
 
-    except Exception as e:
-        print(f"Folder creation error: {e}") # helpful for debugging
-        return f"❌ Error creating folders: {e}"
+        # MERGE: Add new folders to existing map
+        existing_map.update(newly_created_map)
+
+        # Save to DB
+        update_user(phone, "folder_map", existing_map)
+
+        return JSONResponse({"status": "success", "message": "New subjects added successfully"})
 
 
-from fastapi.responses import JSONResponse # Import this at top
+    # ======================================================
+    # 🚀 MODE 2: INITIAL SETUP (If No Root Folder)
+    # ======================================================
+    else:
+        print("✨ Mode: INITIAL SETUP (Creating Root + Defaults)")
 
+        # Build structure for selected subjects
+        final_structure = {}
+        for subj in selected_subjects:
+            final_structure[subj] = full_syllabus.get(subj, [])
+
+        # INJECT DEFAULTS (Only doing this because it's the first run)
+        defaults = {
+            "Important Documents": ["Aadhar Card", "PAN Card", "Resumes", "Mark sheets"],
+            "Screenshots": ["Notes", "Receipts", "Payments"],
+            "Identity Cards": ["College ID", "Govt ID"],
+            "Personal": [],
+            "Imported Documents": []
+        }
+        for k, v in defaults.items():
+            if k not in final_structure:
+                final_structure[k] = v
+
+        # Create EVERYTHING (Root + Children)
+        try:
+            new_root_id, new_map = build_drive_structure(phone, final_structure)
+
+            update_user(phone, "folder_map", new_map)
+            update_user(phone, "root_folder_id", new_root_id)
+            update_user(phone, "status", "ACTIVE")
+
+            send_message(phone, "✅ **Setup Complete!**\nYour dashboard is ready.")
+
+            return JSONResponse({"status": "success", "message": "Workspace created successfully"})
+
+        except Exception as e:
+            print(f"❌ Creation Error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
 @app.post("/upload-syllabus")
 async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
     phone = request.session.get("user_phone")
@@ -439,9 +541,8 @@ async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
     update_user(phone, "temp_syllabus_list", subjects_data)
     update_user(phone, "status", "EDITING_LIST")
 
-    # --- CHANGE: Return JSON so Frontend can display the list ---
-    # We return just the list of subject names (keys)
-    return JSONResponse(content={"subjects": list(subjects_data.keys())})
+    # ✅ CORRECT: Send the full dictionary (Subjects + Units)
+    return JSONResponse(content={"subjects": subjects_data})
 
 
 

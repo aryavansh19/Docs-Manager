@@ -7,6 +7,7 @@ import SetupScreen from "./pages/SetupScreen.jsx";
 import Dashboard from "./pages/Dashboard";
 import AuthOptions from "./pages/AuthOptions";
 import Signup from "./pages/Signup";
+import CreateSubject from "./pages/CreateSubject.jsx";
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/verify" element={<Verification />} />
           <Route path="/setup" element={<SetupScreen />} />
+          <Route path="/create" element={<CreateSubject />} />
         <Route path="/dashboard" element={<Dashboard />} />
           {/* Redirect any other path to Home */}
         <Route path="*" element={<Home />} />

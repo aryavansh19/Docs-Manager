@@ -1,3 +1,4 @@
+
 import google.generativeai as genai
 import os
 import json
@@ -6,15 +7,17 @@ from dotenv import load_dotenv
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-
 def parse_syllabus_with_gemini(file_path):
     """
     Reads a Syllabus PDF/Image and returns a list of Subjects + Units.
+    Returns ONLY academic subjects found in the file.
     """
     print(f"📄 Parsing syllabus: {file_path}...")
 
     # 1. Upload File
     myfile = genai.upload_file(file_path)
+    # Note: Ensure the model name is correct. "gemini-1.5-flash" or "gemini-pro" are common.
+    # "gemini-2.0-flash" might be experimental/preview.
     model = genai.GenerativeModel("gemini-2.5-flash")
 
     # 2. The Prompt (Strict JSON output)
@@ -42,19 +45,9 @@ def parse_syllabus_with_gemini(file_path):
         clean_text = result.text.replace("```json", "").replace("```", "").strip()
         parsed_data = json.loads(clean_text)
 
-        # 4. Inject Default Utility Folders
-        # We add these automatically for every user
-        defaults = {
-            "Important Documents": ["Aadhar Card", "PAN Card", "Resumes"],
-            "Screenshots": ["Notes", "Receipts"],
-            "Identity Cards": ["College ID", "Govt ID"]
-        }
-
-        # Merge defaults into the syllabus
-        parsed_data["subjects"].update(defaults)
-
-        return parsed_data["subjects"]
+        # 4. Return ONLY the subjects found (No defaults here!)
+        return parsed_data.get("subjects", {})
 
     except Exception as e:
         print(f"❌ Parser Error: {e}")
-        return None
+        return {} # Return empty dict instead of None to avoid crashes
