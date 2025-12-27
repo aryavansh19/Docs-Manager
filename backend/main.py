@@ -5,6 +5,9 @@ import json
 from fastapi import FastAPI, Request, BackgroundTasks, Response
 from dotenv import load_dotenv
 
+import io
+from googleapiclient.http import MediaIoBaseDownload
+
 # --- IMPORTS FROM OUR NEW MODULES ---
 from database import get_user, update_user, get_user_by_email
 from syllabus_parser import parse_syllabus_with_gemini
@@ -420,7 +423,6 @@ def append_folders_to_drive(phone, root_folder_id, new_structure):
     return created_map
 
 
-
 @app.post("/create-folders")
 async def create_folders_web(request: Request):
     phone = request.session.get("user_phone")
@@ -517,7 +519,16 @@ async def create_folders_web(request: Request):
             update_user(phone, "root_folder_id", new_root_id)
             update_user(phone, "status", "ACTIVE")
 
-            send_message(phone, "✅ **Setup Complete!**\nYour dashboard is ready.")
+            # Message 1: Confirmation
+            send_message(phone, "✅ *Setup Complete!*\nYour dashboard and folders are ready.")
+
+            # Message 2: How to use (Onboarding)
+            intro_msg = (
+                "🚀 *How to use me:*\n\n"
+                "1️⃣ *Save Files:* Send any image or PDF here. I will analyze it and auto-sort it into the correct Subject folder.\n\n"
+                "2️⃣ *Find Files:* Just ask things like _'Get Physics notes'_ or _'Find Unit 1 papers'_ and I'll fetch them instantly!"
+            )
+            send_message(phone, intro_msg)
 
             return JSONResponse({"status": "success", "message": "Workspace created successfully"})
 
@@ -554,63 +565,89 @@ def process_file_background(media_id, sender, temp_filename):
 
     if download_media(media_id, temp_filename):
         try:
-            # 1. LOAD USER MAP FROM DB
+            # 1. LOAD USER MAP
             user = get_user(sender)
             my_folders = user.get("folder_map", {})
-
-            # ==========================================
-            # 🛠️ THE FIX: Convert String -> Dictionary
-            # ==========================================
             if isinstance(my_folders, str):
                 try:
                     my_folders = json.loads(my_folders)
-                except json.JSONDecodeError:
-                    print("❌ Error: Invalid JSON in folder_map")
+                except:
                     my_folders = {}
-            # ==========================================
 
             if not my_folders:
-                send_message(sender, "⚠️ Setup not found. Go to the dashboard to create folders.")
+                send_message(sender, "⚠️ No folders set up. Please go to the dashboard.")
                 return
 
-            # 2. Ask Gemini to Sort
-            # Now 'my_folders' is a valid dictionary, so .items() will work inside this function
+            # 2. ASK GEMINI TO SORT
             decision = ask_gemini_to_sort(temp_filename, my_folders)
 
             subj = decision.get('subject')
             unit = decision.get('unit')
-            new_name = decision.get('suggested_filename')
+            new_name = decision.get('suggested_filename', temp_filename)
 
-            # 3. Check & Prepare
-            # We use .get() to prevent crashing if keys don't exist
+            target_folder_id = None
+            save_location_name = ""
+
+            # 3. DETERMINE TARGET FOLDER (Auto-Sort Logic)
+
+            # Case A: Exact Match (Subject + Unit found)
             if subj in my_folders and unit in my_folders[subj].get('units', {}):
-                folder_id = my_folders[subj]['units'][unit]
+                target_folder_id = my_folders[subj]['units'][unit]
+                save_location_name = f"{subj} > {unit}"
 
-                # Save state for button click
-                pending_actions[sender] = {
-                    "local_path": temp_filename,
-                    "drive_folder_id": folder_id,
-                    "new_name": new_name,
-                    "subject": subj
-                }
+            # Case B: Subject Match Only (Unit unknown/missing) -> Save to Subject Root
+            elif subj in my_folders:
+                target_folder_id = my_folders[subj]['id']
+                save_location_name = f"{subj} (Root)"
 
-                msg = (f"🧐 *Analysis:*\n📂 {subj}\n📝 {unit}\n📄 _{new_name}_")
+            # Case C: Fallback / Utility Folders
+            elif subj in ["Important Documents", "Screenshots", "Identity Cards", "Personal"]:
+                # Check if these exist in the user's map (they should, from setup)
+                if subj in my_folders:
+                    target_folder_id = my_folders[subj]  # Might be string ID or dict depending on setup
+                    if isinstance(target_folder_id, dict): target_folder_id = target_folder_id.get('id')
+                    save_location_name = subj
 
-                buttons = [
-                    {"id": "save_file", "title": "✅ Save"},
-                    {"id": "discard_file", "title": "❌ Discard"}
-                ]
-                send_buttons(sender, msg, buttons)
+            # Case D: No idea -> 'Imported Documents'
+            if not target_folder_id:
+                if "Imported Documents" in my_folders:
+                    target = my_folders["Imported Documents"]
+                    target_folder_id = target.get('id') if isinstance(target, dict) else target
+                    save_location_name = "Imported Documents"
+                else:
+                    # Last resort: Root Folder
+                    target_folder_id = user.get("root_folder_id")
+                    save_location_name = "Home Folder"
+
+            # 4. EXECUTE SAVE (No Buttons!)
+            if target_folder_id:
+                # Authenticate Drive
+                drive_service = authenticate_drive(sender)
+
+                # Upload
+                upload_to_drive(drive_service, temp_filename, new_name, target_folder_id)
+
+                # Notify User
+                send_message(sender, f"✅ **Auto-Saved!**\n📂 *{save_location_name}*\n📄 _{new_name}_")
             else:
-                send_message(sender, f"⚠️ AI identified '{subj}', but it's not in your syllabus folders.")
+                send_message(sender, "❌ Error: Could not determine where to save this file.")
 
         except Exception as e:
-            print(f"❌ Error in process_file: {e}")
+            print(f"❌ Auto-Save Error: {e}")
             import traceback
-            traceback.print_exc() # This will print the exact line number of the error
-            send_message(sender, "❌ Error analyzing file.")
+            traceback.print_exc()
+            send_message(sender, "❌ Failed to save file.")
+
+        finally:
+            # Cleanup temp file
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
     else:
-        send_message(sender, "❌ Failed to download file.")
+        send_message(sender, "❌ Failed to download file from WhatsApp.")
+
+
+
+
 # ==========================================
 # 👂 WEBHOOK LISTENER
 # ==========================================
@@ -643,9 +680,10 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                         else:
                             # They are verified but haven't run the wizard
                             update_user(sender, "status", "CONNECTED")
-                            send_message(sender, "✅ *Linked Successfully!* \n\n"
-                                                 "👉 Now please go to the dashboard to **Upload your Syllabus** and setup folders:\n"
-                                                 "http://localhost:5173/setup")
+                            send_message(sender,
+                                         "✅ *Linked Successfully!*\n\n"
+                                         "Proceed to your dashboard to setup your folders. 📂"
+                                         )
                     else:
                         send_message(sender,
                                      "⚠️ *Verification Failed* \nLogin on the website first, then type VERIFY here.")
@@ -677,44 +715,63 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                              "👉 http://localhost:5173/setup"
                              )
 
-            # --- CASE C: ACTIVE USER (The Main Bot) ---
+                # --- CASE C: ACTIVE USER (The Main Bot) ---
             elif status == "ACTIVE":
 
                 # 1. TEXT MESSAGE -> SEARCH INTENT
                 if msg_type == 'text':
                     text_body = msg['text']['body']
-                    my_folders = user.get("folder_map", {})
 
+                    # A. Load Folder Map safely
+                    my_folders = user.get("folder_map", {})
                     if isinstance(my_folders, str):
                         try:
                             my_folders = json.loads(my_folders)
-                        except json.JSONDecodeError:
-                            print("❌ Error: Invalid JSON in folder_map")
+                        except:
                             my_folders = {}
 
-                    # Ask Gemini: Is this a search?
-                    analysis = parse_search_intent(text_body, my_folders)
+                    # B. Check Intent (Search vs Chat)
+                    intent = parse_search_intent(text_body, my_folders)
+                    is_search = intent.get("is_search")
+                    subject_match = intent.get("subject")
 
-                    if analysis.get("is_search"):
-                        subj = analysis.get("subject")
-                        if subj in my_folders:
-                            target_id = my_folders[subj]['id']
-                            send_message(sender, f"🔍 Searching in *{subj}*...")
+                    if is_search:
+                        send_message(sender, f"🔍 Searching for '{text_body}'...")
 
-                            # Assuming you have this helper function
-                            files = search_drive_files(target_id, sender)
+                        # C. Determine Folder ID (if any)
+                        parent_id = None
+                        if subject_match and subject_match in my_folders:
+                            parent_id = my_folders[subject_match]['id']
 
-                            if files:
-                                response_msg = f"📂 **Files found in {subj}:**\n\n"
-                                for f in files:
-                                    response_msg += f"📄 {f['name']}\n🔗 {f['webViewLink']}\n\n"
-                                send_message(sender, response_msg)
-                            else:
-                                send_message(sender, f"❌ No files found in {subj}.")
+                        # ==================================================
+                        # D. CALL THE NEW FUNCTION
+                        # Note: We pass 'sender' (phone number), not service object
+                        # ==================================================
+                        files_found = search_drive_files(sender, text_body, parent_id)
+
+                        if not files_found:
+                            send_message(sender, "❌ No files found.")
+
                         else:
-                            send_message(sender, "⚠️ Subject folder not found.")
+                            # E. Format the Results
+                            msg = f"📂 **Found {len(files_found)} files:**\n\n"
+
+                            # Limit to 5 results to avoid spamming
+                            for f in files_found[:5]:
+                                icon = "📄"
+                                if "image" in f['mimeType']:
+                                    icon = "🖼️"
+                                elif "pdf" in f['mimeType']:
+                                    icon = "📕"
+                                elif "folder" in f['mimeType']:
+                                    icon = "📁"
+
+                                msg += f"{icon} *{f['name']}*\n🔗 {f['webViewLink']}\n\n"
+
+                            send_message(sender, msg)
+
                     else:
-                        send_message(sender, "📤 Send me a file to save, or ask 'Get Physics notes'.")
+                        send_message(sender, "📤 Send me a file to save, or ask 'Find Adhar Card'.")
 
                 # 2. FILE MESSAGE -> SORTING INTENT
                 elif msg_type in ['document', 'image']:
