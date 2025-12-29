@@ -10,3 +10,4 @@ python-dotenv>=1.0.1
 requests
 pydantic>=2.9.0
 starlette>=0.37.2
+itsdangerous
