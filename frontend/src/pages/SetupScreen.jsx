@@ -173,7 +173,7 @@ export default function Setup() {
         formData.append("file", file);
 
         try {
-            const res = await axios.post("http://localhost:8001/upload-syllabus", formData, {
+            const res = await axios.post(`${API_URL}/upload-syllabus`, formData, {
                 withCredentials: true,
                 headers: { "Content-Type": "multipart/form-data" }
             });
@@ -243,7 +243,7 @@ export default function Setup() {
         subjects.forEach(s => formData.append("selected_subjects", s.name));
 
         try {
-            await axios.post('http://localhost:8001/create-folders', formData, {
+            await axios.post(`${API_URL}/create-folders`, formData, {
                 withCredentials: true,
                 headers: { "Content-Type": "multipart/form-data" }
             });
