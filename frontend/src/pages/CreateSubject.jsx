@@ -6,6 +6,8 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, useNavigate } from "react-router-dom";
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
 export default function CreateSubject() {
     const navigate = useNavigate();
     // Phases: 'select-mode', 'upload', 'manual', 'analyzing', 'preview', 'creating'
@@ -24,7 +26,7 @@ export default function CreateSubject() {
         formData.append("file", file);
 
         try {
-            const res = await axios.post("http://localhost:8001/upload-syllabus", formData, {
+            const res = await axios.post(`${API_URL}/upload-syllabus`, formData, {
                 withCredentials: true,
                 headers: { "Content-Type": "multipart/form-data" }
             });
@@ -58,7 +60,7 @@ export default function CreateSubject() {
         selectedSubjects.forEach(s => formData.append("selected_subjects", s.name));
 
         try {
-            await axios.post('http://localhost:8001/create-folders', formData, {
+            await axios.post(`${API_URL}/create-folders`, formData, {
                 withCredentials: true,
                 headers: { "Content-Type": "multipart/form-data" }
             });
@@ -77,7 +79,7 @@ export default function CreateSubject() {
         formData.append("selected_subjects", manualName);
 
         try {
-            await axios.post('http://localhost:8001/create-folders', formData, {
+            await axios.post(`${API_URL}/create-folders`, formData, {
                 withCredentials: true,
                 headers: { "Content-Type": "multipart/form-data" }
             });
