@@ -150,7 +150,12 @@ export default function Dashboard() {
 
     const fetchDashboardData = () => {
         setLoading(true);
-        axios.get('http://localhost:8001/api/dashboard-data', { withCredentials: true })
+
+        // Detect if we are on Vercel (Production) or Localhost (Development)
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
+        // Update your axios call to use this variable
+        axios.get(`${API_URL}/api/dashboard-data`, { withCredentials: true })
             .then(res => {
                 const data = res.data;
                 setUserData(data);
@@ -195,7 +200,9 @@ export default function Dashboard() {
     };
 
     const fetchDriveContent = (folderId) => {
-        axios.get(`http://localhost:8001/api/drive/browse?folder_id=${folderId}`, { withCredentials: true })
+        // Detect if we are on Vercel (Production) or Localhost (Development)
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+        axios.get(`${API_URL}/api/drive/browse?folder_id=${folderId}`, { withCredentials: true })
             .then(res => {
                 setFolders(res.data.folders || []);
                 setFiles(res.data.files || []);
@@ -207,7 +214,8 @@ export default function Dashboard() {
             });
     };
 
-    const handleLogout = () => { window.location.href = "http://localhost:8001/logout"; };
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+    const handleLogout = () => { window.location.href = `${API_URL}/logout`; };
 
     const handleFolderClick = (folder) => {
         setBreadcrumbs([...breadcrumbs, { id: folder.id, name: folder.name }]);

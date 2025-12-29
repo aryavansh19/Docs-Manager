@@ -145,7 +145,11 @@ def login(request: Request):
 
     # Redirect to Google
     client_id = os.getenv("GOOGLE_CLIENT_ID")
-    redirect_uri = "http://localhost:8001/auth/callback"
+
+    current_backend_url = os.getenv("BACKEND_URL", "http://localhost:8001")
+    redirect_uri = f"{current_backend_url}/auth/callback"
+
+    #redirect_uri = "http://localhost:8001/auth/callback"
     scope = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"
     # Added userinfo.email scope above ^
 
@@ -164,13 +168,20 @@ def auth_callback(request: Request):
 
     # 1. Exchange Code for Tokens
     token_url = "https://oauth2.googleapis.com/token"
+
+    # Determine the correct Redirect URI based on where the code is running
+    # If running on Render, this environment variable should be set (we will add it next)
+    current_backend_url = os.getenv("BACKEND_URL", "http://localhost:8001")
+    redirect_uri = f"{current_backend_url}/auth/callback"
+
     data = {
         "code": code,
         "client_id": os.getenv("GOOGLE_CLIENT_ID"),
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-        "redirect_uri": "http://localhost:8001/auth/callback",
+        "redirect_uri": redirect_uri,  # <--- Now uses the dynamic variable
         "grant_type": "authorization_code"
     }
+
     response = requests.post(token_url, data=data)
     new_tokens = response.json()
     access_token = new_tokens.get("access_token")
