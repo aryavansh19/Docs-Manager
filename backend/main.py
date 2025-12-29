@@ -138,45 +138,63 @@ def login(request: Request):
     # Check if phone was provided (Door A: Signup)
     phone = request.query_params.get("phone")
 
+    # We still try to save to session as a backup, but we don't rely on it
     if phone:
-        # Door A: Signup - We know the phone, save it to session
         print(f"DEBUG: Signup Request for {phone}")
         request.session["user_phone"] = phone
     else:
-        # Door B: Login - We don't know phone yet, will find it later via Email
         print(f"DEBUG: Direct Login Request (No Phone)")
-        # Clear session just in case
         if "user_phone" in request.session:
             del request.session["user_phone"]
 
-    # Redirect to Google
+    # --- GOOGLE OAUTH SETUP ---
     client_id = os.getenv("GOOGLE_CLIENT_ID")
-
     current_backend_url = os.getenv("BACKEND_URL", "http://localhost:8001")
     redirect_uri = f"{current_backend_url}/auth/callback"
 
-    #redirect_uri = "http://localhost:8001/auth/callback"
     scope = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"
-    # Added userinfo.email scope above ^
 
-    url = f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&access_type=offline&prompt=select_account"
+    # 🛑 CRITICAL FIX: PREPARE THE 'STATE' PARAMETER
+    # If we have a phone, we put it in the 'state'. If not, we send "null".
+    # This ensures the phone number survives the trip to Google and back.
+    state_value = phone if phone else "null"
+
+    # Add &state={state_value} to the URL 👇
+    url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"response_type=code&"
+        f"client_id={client_id}&"
+        f"redirect_uri={redirect_uri}&"
+        f"scope={scope}&"
+        f"access_type=offline&"
+        f"prompt=select_account&"
+        f"state={state_value}"  # <--- THIS IS THE MAGIC FIX
+    )
 
     return RedirectResponse(url)
-
 
 # --- ROUTE 2: THE CALLBACK (THE BRAIN) ---
 @app.get("/auth/callback")
 def auth_callback(request: Request):
-    code = request.query_params.get("code")
-    session_phone = request.session.get("user_phone")  # Might be None if Door B
+    print("🚀 Auth Callback started!")
 
-    if not code: return "❌ Error: Missing code."
+    code = request.query_params.get("code")
+
+    # [CHANGE 1] Get phone from the URL 'backpack' (State)
+    state_phone = request.query_params.get("state")
+
+    # [CHANGE 2] Get phone from Session (Backup)
+    session_phone = request.session.get("user_phone")
+
+    print(f"DEBUG: Code: {bool(code)} | State: {state_phone} | Session: {session_phone}")
+
+    if not code:
+        return "❌ Error: Missing code."
 
     # 1. Exchange Code for Tokens
     token_url = "https://oauth2.googleapis.com/token"
 
-    # Determine the correct Redirect URI based on where the code is running
-    # If running on Render, this environment variable should be set (we will add it next)
+    # Use environment variable for backend URL
     current_backend_url = os.getenv("BACKEND_URL", "http://localhost:8001")
     redirect_uri = f"{current_backend_url}/auth/callback"
 
@@ -184,88 +202,98 @@ def auth_callback(request: Request):
         "code": code,
         "client_id": os.getenv("GOOGLE_CLIENT_ID"),
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-        "redirect_uri": redirect_uri,  # <--- Now uses the dynamic variable
+        "redirect_uri": redirect_uri,
         "grant_type": "authorization_code"
     }
 
-    response = requests.post(token_url, data=data)
-    new_tokens = response.json()
-    access_token = new_tokens.get("access_token")
+    try:
+        response = requests.post(token_url, data=data)
+        new_tokens = response.json()
+        access_token = new_tokens.get("access_token")
 
-    # 2. Fetch Google Profile
-    user_info = requests.get(
-        "https://www.googleapis.com/oauth2/v1/userinfo",
-        headers={"Authorization": f"Bearer {access_token}"}
-    ).json()
+        # 2. Fetch Google Profile
+        user_info = requests.get(
+            "https://www.googleapis.com/oauth2/v1/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"}
+        ).json()
 
-    google_email = user_info.get("email")
-    user_name = user_info.get("name", "Student")
-    user_pic = user_info.get("picture", "")
+        google_email = user_info.get("email")
+        user_name = user_info.get("name", "Student")
+        user_pic = user_info.get("picture", "")
+
+        print(f"DEBUG: Google Email found: {google_email}")
+
+    except Exception as e:
+        return f"❌ Error connecting to Google: {str(e)}"
 
     final_phone = None
 
-    # --- LOGIC BRANCHING ---
+    # --- LOGIC BRANCHING (Fixed) ---
 
-    if session_phone:
-        # === DOOR A: SIGNUP ===
-        print(f"🔗 Linking {google_email} to {session_phone}")
-        update_user(session_phone, "email", google_email)
-        final_phone = session_phone
+    # [CHANGE 3] Check State FIRST, then Session. If either exists, we are in "Door A" (Signup/Linking)
+    if (state_phone and state_phone != "null") or session_phone:
+        # Use state_phone if available, otherwise fallback to session_phone
+        target_phone = state_phone if (state_phone and state_phone != "null") else session_phone
 
-        # # [CHANGE 1] Upgrade status so they don't get stuck in 'NEW'
-        # current_user = get_user(session_phone)
-        # if current_user.get("status") in ["NEW", "VERIFIED"]:
-        #     update_user(session_phone, "status", "CONNECTED")
+        print(f"🔗 Linking {google_email} to {target_phone}")
+        update_user(target_phone, "email", google_email)
+        final_phone = target_phone
 
     else:
-        # === DOOR B: LOGIN ===
+        # === DOOR B: DIRECT LOGIN ===
+        # We don't have a phone number, so we must find it using the email
         print(f"🔍 Looking up user by email: {google_email}")
         existing_user = get_user_by_email(google_email)
 
         if existing_user:
             final_phone = existing_user['phone']
-            # RESTORE SESSION
-            request.session["user_phone"] = final_phone
 
-            # Handle Refresh Token logic
+            # Handle Refresh Token logic (Keep old refresh token if new one is missing)
             if existing_user.get("google_token"):
-                # Handle case where token might be stored as string or dict
-                old_tokens = json.loads(existing_user["google_token"]) if isinstance(existing_user["google_token"],
-                                                                                     str) else existing_user[
-                    "google_token"]
+                old_tokens = existing_user["google_token"]
+                if isinstance(old_tokens, str):
+                    old_tokens = json.loads(old_tokens)
 
                 if "refresh_token" not in new_tokens:
                     new_tokens["refresh_token"] = old_tokens.get("refresh_token")
         else:
-            return "❌ Account not found. Please go back and enter your phone number to Sign Up first."
+            # If we can't find the user and they didn't provide a phone, we can't log them in.
+            return RedirectResponse(
+                url=f"{os.getenv('FRONTEND_URL')}/?error=account_not_found"
+            )
 
-    # 3. Save Updates
-        # 3. Save Updates
-        update_user(final_phone, "google_token", new_tokens)
-        update_user(final_phone, "name", user_name)
-        update_user(final_phone, "picture", user_pic)
-        update_user(final_phone, "email", google_email)
+    # 3. Save Updates (Running for EVERYONE now)
+    update_user(final_phone, "google_token", new_tokens)
+    update_user(final_phone, "name", user_name)
+    update_user(final_phone, "picture", user_pic)
+    update_user(final_phone, "email", google_email)
 
-        # 🛑 CRITICAL FIX: FORCE RE-SAVE SESSION
-        # Even if the session exists, we overwrite it.
-        # This forces the server to send a new 'Set-Cookie' header with the new 'SameSite=None' security rules.
-        request.session["user_phone"] = final_phone
+    # 🛑 FORCE COOKIE REFRESH
+    # This is critical for Vercel <-> Render communication
+    request.session["user_phone"] = final_phone
 
-        # 4. Redirect based on Status
-        user = get_user(final_phone)
-        status = user.get("status", "NEW")
+    # 4. Redirect based on Status
+    user = get_user(final_phone)
+    status = user.get("status", "NEW")
 
-        # Define frontend_url (Make sure this matches your Vercel URL exactly)
-        frontend_url = os.getenv("FRONTEND_URL", "https://docs-manager-iota.vercel.app")
+    # If they are NEW but just linked Google, upgrade them so they go to Setup
+    if status == "NEW":
+        update_user(final_phone, "status", "CONNECTED")
+        status = "CONNECTED"
 
-        if status == "ACTIVE":
-            target_url = f"{frontend_url}/dashboard"
-        elif status in ["CONNECTED", "AWAITING_SYLLABUS"]:
-            target_url = f"{frontend_url}/setup"
-        else:
-            target_url = f"{frontend_url}/verify"
+    # Define frontend_url
+    frontend_url = os.getenv("FRONTEND_URL", "https://docs-manager-iota.vercel.app")
 
-        return RedirectResponse(url=target_url, status_code=303)
+    if status == "ACTIVE":
+        target_url = f"{frontend_url}/dashboard"
+    elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
+        target_url = f"{frontend_url}/setup"
+    else:
+        target_url = f"{frontend_url}/verify"
+
+    print(f"🚀 Redirecting {final_phone} to {target_url}")
+    return RedirectResponse(url=target_url, status_code=303)
+
 
 @app.post("/api/complete-setup")
 async def complete_setup(data: SetupRequest):
