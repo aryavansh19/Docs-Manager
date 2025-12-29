@@ -3,6 +3,8 @@ import { motion } from "framer-motion";
 import { Phone, Terminal, ArrowRight, UserPlus, ShieldCheck, ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
 export default function Signup() {
     const [phone, setPhone] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -15,7 +17,7 @@ export default function Signup() {
 
         setIsLoading(true);
         // DOOR A: Redirect browser to Python Backend with the phone number
-        window.location.href = `http://localhost:8001/login?phone=${phone}`;
+        window.location.href = `${API_URL}/login?phone=${phone}`;
     };
 
     return (
