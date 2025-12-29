@@ -3,13 +3,15 @@ import { motion } from "framer-motion";
 import { CheckCircle, Terminal, ArrowRight, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
 export default function Login() {
     const [isLoading, setIsLoading] = useState(false);
 
     const handleGoogleLogin = () => {
         setIsLoading(true);
         // Direct browser to Python Backend (Door B: Login via Email lookup)
-        window.location.href = `http://localhost:8001/login`;
+        window.location.href = `${API_URL}/login`;
     };
 
     return (

@@ -4,6 +4,8 @@ import axios from 'axios';
 import { Smartphone, CheckCircle2, Loader2, ArrowRight, Shield, Terminal } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
 const Verification = () => {
     const navigate = useNavigate();
     const [phone, setPhone] = useState("...");
@@ -12,7 +14,7 @@ const Verification = () => {
     useEffect(() => {
         // Function to check status from Backend
         const fetchStatus = () => {
-            axios.get('http://localhost:8001/api/dashboard-data', { withCredentials: true })
+            axios.get('${API_URL}/api/dashboard-data', { withCredentials: true })
                 .then(res => {
                     if (res.data.phone) setPhone(res.data.phone);
                     const status = res.data.status;
