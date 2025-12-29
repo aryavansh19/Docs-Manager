@@ -1,5 +1,5 @@
 fastapi==0.128.0
-uvicorn[standard]
+uvicorn[standard]>=0.27.0
 python-multipart
 google-api-python-client==2.159.0
 google-generativeai
