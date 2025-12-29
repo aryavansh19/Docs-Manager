@@ -41,14 +41,14 @@ origins = [
     "http://localhost:3000",  # Just in case
 ]
 
+# In main.py
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Allows all domains (easiest for setup)
     allow_credentials=True,
-    allow_methods=["*"],  # Allow GET, POST, PUT, DELETE
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # --- CONFIG ---
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
