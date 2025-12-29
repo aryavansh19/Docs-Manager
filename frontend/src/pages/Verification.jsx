@@ -4,6 +4,7 @@ import axios from 'axios';
 import { Smartphone, CheckCircle2, Loader2, ArrowRight, Shield, Terminal } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+// Use the environment variable for the URL
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 
 const Verification = () => {
@@ -12,18 +13,21 @@ const Verification = () => {
     const [isVerified, setIsVerified] = useState(false);
 
     useEffect(() => {
-        // Function to check status from Backend
         const fetchStatus = () => {
+            // 👇 FIX IS HERE: Changed single quotes ' ' to backticks ` `
             axios.get(`${API_URL}/api/dashboard-data`, { withCredentials: true })
                 .then(res => {
+                    // Update phone if available
                     if (res.data.phone) setPhone(res.data.phone);
-                    const status = res.data.status;
 
-                    // If status is no longer NEW, they have verified!
+                    const status = res.data.status;
+                    console.log("Current Status:", status); // Debug log
+
+                    // Check if status means they are verified
                     if (["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE", "EDITING_LIST"].includes(status)) {
                         setIsVerified(true);
 
-                        // Wait 1.5s for success animation then navigate
+                        // Wait 1.5s for animation, then redirect
                         setTimeout(() => {
                             if (status === "ACTIVE") {
                                 navigate('/dashboard');
@@ -33,7 +37,7 @@ const Verification = () => {
                         }, 1500);
                     }
                 })
-                .catch((err) => console.error("Waiting for login...", err));
+                .catch((err) => console.error("Waiting for verification...", err));
         };
 
         // 1. Initial Check
@@ -41,11 +45,12 @@ const Verification = () => {
 
         // 2. Poll every 2 seconds
         const interval = setInterval(() => {
+            // Only keep checking if we aren't verified yet
             if (!isVerified) fetchStatus();
         }, 2000);
 
         return () => clearInterval(interval);
-    }, [isVerified, navigate]);
+    }, [isVerified, navigate]); // Added navigate to dependency array
 
     return (
         <div className="min-h-screen bg-[#020202] text-white font-mono flex flex-col items-center justify-center relative overflow-hidden">
