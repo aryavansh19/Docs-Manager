@@ -14,7 +14,7 @@ const Verification = () => {
     useEffect(() => {
         // Function to check status from Backend
         const fetchStatus = () => {
-            axios.get('${API_URL}/api/dashboard-data', { withCredentials: true })
+            axios.get(`${API_URL}/api/dashboard-data`, { withCredentials: true })
                 .then(res => {
                     if (res.data.phone) setPhone(res.data.phone);
                     const status = res.data.status;
