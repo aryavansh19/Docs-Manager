@@ -706,128 +706,163 @@ def process_file_background(media_id, sender, temp_filename):
 # ==========================================
 @app.post("/webhook")
 async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
-    data = await request.json()
-
     try:
-        entry = data['entry'][0]['changes'][0]['value']
-        if 'messages' in entry:
-            msg = entry['messages'][0]
-            sender = msg['from']
-            msg_type = msg['type']
+        data = await request.json()
 
-            # Get current user state
-            user = get_user(sender)
+        # ---------------------------------------------------------
+        # 🛡️ 1. SAFETY CHECKS (Prevent Crashing on Status Updates)
+        # ---------------------------------------------------------
+        # Check if 'entry' exists
+        if not data.get('entry'):
+            return Response(content="No entry", status_code=200)
+
+        # Get the first entry safely
+        entry_list = data['entry']
+        if not entry_list:
+            return Response(content="Empty entry list", status_code=200)
+
+        changes_list = entry_list[0].get('changes')
+        if not changes_list:
+            return Response(content="No changes", status_code=200)
+
+        # Get the value object
+        value = changes_list[0].get('value')
+        if not value:
+            return Response(content="No value", status_code=200)
+
+        # 🛑 IGNORE STATUS UPDATES (Sent, Delivered, Read)
+        # These updates don't have 'messages', so we skip them to avoid crashes.
+        if 'messages' not in value:
+            return Response(content="Status update ignored", status_code=200)
+
+        # ---------------------------------------------------------
+        # 📩 2. PROCESS ACTUAL MESSAGE
+        # ---------------------------------------------------------
+        msg = value['messages'][0]
+        sender = msg['from']
+        msg_type = msg['type']
+
+        # 🛡️ SAFETY CHECK: Handle users who aren't in DB yet
+        user = get_user(sender)
+
+        if user:
             status = user.get('status', 'NEW')
+        else:
+            # If user is None (not found), treat them as NEW and use empty dict to prevent crashes
+            status = "NEW"
+            user = {}
 
             # ============================================================
-            # 🚀 1. VERIFICATION INTERCEPTOR (Keep this)
-            # ============================================================
-            if msg_type == 'text':
-                text_body = msg['text']['body'].strip().upper()
-                if text_body == "VERIFY":
-                    if user and user.get("google_token"):
-                        # If they are verified, we check if they finished setup
-                        if user.get("root_folder_id"):
-                            update_user(sender, "status", "ACTIVE")
-                            send_message(sender, "✅ *You are ready!* Send me a file to organize.")
-                        else:
-                            # They are verified but haven't run the wizard
-                            update_user(sender, "status", "CONNECTED")
-                            send_message(sender,
-                                         "✅ *Linked Successfully!*\n\n"
-                                         "Proceed to your dashboard to setup your folders. 📂"
-                                         )
+        # 🚀 3. VERIFICATION INTERCEPTOR
+        # ============================================================
+        if msg_type == 'text':
+            # Safely get body (some text messages might be empty or location pins)
+            text_body = msg.get('text', {}).get('body', '').strip().upper()
+
+            if text_body == "VERIFY":
+                # Ensure user exists and has google_token
+                if user and user.get("google_token"):
+                    # If they are verified, we check if they finished setup
+                    if user.get("root_folder_id"):
+                        update_user(sender, "status", "ACTIVE")
+                        send_message(sender, "✅ *You are ready!* Send me a file to organize.")
                     else:
+                        # They are verified but haven't run the wizard
+                        update_user(sender, "status", "CONNECTED")
                         send_message(sender,
-                                     "⚠️ *Verification Failed* \nLogin on the website first, then type VERIFY here.")
-                    return "OK"
+                                     "✅ *Linked Successfully!*\n\n"
+                                     "Proceed to your dashboard to setup your folders. 📂"
+                                     )
+                else:
+                    send_message(sender,
+                                 "⚠️ *Verification Failed* \nLogin on the website first, then type VERIFY here.")
+                return "OK"
 
-            # ============================================================
-            # 🚦 2. STATUS HANDLER
-            # ============================================================
+        # ============================================================
+        # 🚦 4. STATUS HANDLER
+        # ============================================================
 
-            # --- CASE A: NEW USER (Needs to Login) ---
-            if status == "NEW" or status == "AWAITING_LOGIN":
-                # Use your ngrok URL here
-                base_url = "https://your-ngrok-url.ngrok-free.app"
-                link = f"{base_url}/login?phone={sender}"
+        # Define frontend_url for links (Use env variable)
+        frontend_url = os.getenv("FRONTEND_URL", "https://your-app.vercel.app")
 
-                send_message(sender,
-                             "👋 *Welcome to DocOrganizer!* \n\n"
-                             "Tap below to connect Google Drive & Setup Folders:\n"
-                             f"{link}"
-                             )
-                update_user(sender, "status", "AWAITING_LOGIN")
+        # --- CASE A: NEW USER (Needs to Login) ---
+        if status == "NEW" or status == "AWAITING_LOGIN":
+            base_url = os.getenv("BACKEND_URL", "https://your-backend.onrender.com")
+            # We send them to the FRONTEND login page now, or backend?
+            # Usually better to send to frontend:
+            link = f"{frontend_url}/?phone={sender}"  # Or keep your logic if it works
 
-            # --- CASE B: PENDING SETUP (Needs to finish Website Wizard) ---
-            # This handles users who logged in but didn't finish the Setup Screen
-            elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
-                send_message(sender,
-                             "⏳ *Setup Incomplete* \n\n"
-                             "Please finish setting up your subjects on the dashboard:\n"
-                             f"👉 {frontend_url}/setup"
-                             )
+            send_message(sender,
+                         "👋 *Welcome to DocOrganizer!* \n\n"
+                         "Tap below to connect Google Drive & Setup Folders:\n"
+                         f"{link}"
+                         )
+            update_user(sender, "status", "AWAITING_LOGIN")
 
-                # --- CASE C: ACTIVE USER (The Main Bot) ---
-            elif status == "ACTIVE":
+        # --- CASE B: PENDING SETUP (Needs to finish Website Wizard) ---
+        elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
+            send_message(sender,
+                         "⏳ *Setup Incomplete* \n\n"
+                         "Please finish setting up your subjects on the dashboard:\n"
+                         f"👉 {frontend_url}/setup"
+                         )
 
-                # 1. TEXT MESSAGE -> SEARCH INTENT
-                if msg_type == 'text':
-                    text_body = msg['text']['body']
+        # --- CASE C: ACTIVE USER (The Main Bot) ---
+        elif status == "ACTIVE":
 
-                    # A. Load Folder Map safely
-                    my_folders = user.get("folder_map", {})
-                    if isinstance(my_folders, str):
-                        try:
-                            my_folders = json.loads(my_folders)
-                        except:
-                            my_folders = {}
+            # 1. TEXT MESSAGE -> SEARCH INTENT
+            if msg_type == 'text':
+                text_body = msg.get('text', {}).get('body', '')
 
-                    # B. Check Intent (Search vs Chat)
-                    intent = parse_search_intent(text_body, my_folders)
-                    is_search = intent.get("is_search")
-                    subject_match = intent.get("subject")
+                # A. Load Folder Map safely
+                my_folders = user.get("folder_map", {})
+                if isinstance(my_folders, str):
+                    try:
+                        my_folders = json.loads(my_folders)
+                    except:
+                        my_folders = {}
 
-                    if is_search:
-                        send_message(sender, f"🔍 Searching for '{text_body}'...")
+                # B. Check Intent
+                intent = parse_search_intent(text_body, my_folders)
+                is_search = intent.get("is_search")
+                subject_match = intent.get("subject")
 
-                        # C. Determine Folder ID (if any)
-                        parent_id = None
-                        if subject_match and subject_match in my_folders:
-                            parent_id = my_folders[subject_match]['id']
+                if is_search:
+                    send_message(sender, f"🔍 Searching for '{text_body}'...")
 
-                        # ==================================================
-                        # D. CALL THE NEW FUNCTION
-                        # Note: We pass 'sender' (phone number), not service object
-                        # ==================================================
-                        files_found = search_drive_files(sender, text_body, parent_id)
+                    # C. Determine Folder ID
+                    parent_id = None
+                    if subject_match and subject_match in my_folders:
+                        parent_id = my_folders[subject_match]['id']
 
-                        if not files_found:
-                            send_message(sender, "❌ No files found.")
+                    # D. Call Search
+                    files_found = search_drive_files(sender, text_body, parent_id)
 
-                        else:
-                            # E. Format the Results
-                            msg = f"📂 **Found {len(files_found)} files:**\n\n"
-
-                            # Limit to 5 results to avoid spamming
-                            for f in files_found[:5]:
-                                icon = "📄"
-                                if "image" in f['mimeType']:
-                                    icon = "🖼️"
-                                elif "pdf" in f['mimeType']:
-                                    icon = "📕"
-                                elif "folder" in f['mimeType']:
-                                    icon = "📁"
-
-                                msg += f"{icon} *{f['name']}*\n🔗 {f['webViewLink']}\n\n"
-
-                            send_message(sender, msg)
-
+                    if not files_found:
+                        send_message(sender, "❌ No files found.")
                     else:
-                        send_message(sender, "📤 Send me a file to save, or ask 'Find Adhar Card'.")
+                        # E. Format Results
+                        response_msg = f"📂 **Found {len(files_found)} files:**\n\n"
+                        for f in files_found[:5]:
+                            icon = "📄"
+                            if "image" in f['mimeType']:
+                                icon = "🖼️"
+                            elif "pdf" in f['mimeType']:
+                                icon = "📕"
+                            elif "folder" in f['mimeType']:
+                                icon = "📁"
 
-                # 2. FILE MESSAGE -> SORTING INTENT
-                elif msg_type in ['document', 'image']:
+                            response_msg += f"{icon} *{f['name']}*\n🔗 {f['webViewLink']}\n\n"
+
+                        send_message(sender, response_msg)
+
+                else:
+                    send_message(sender, "📤 Send me a file to save, or ask 'Find Adhar Card'.")
+
+            # 2. FILE MESSAGE -> SORTING INTENT
+            elif msg_type in ['document', 'image']:
+                # Ensure the media key exists before accessing
+                if msg_type in msg:
                     media_id = msg[msg_type]['id']
 
                     # Determine extension
@@ -842,40 +877,40 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                     temp_filename = f"file_{sender}{ext}"
 
                     send_message(sender, "🤖 Analyzing document...")
-                    # This background task handles the AI sorting logic
                     background_tasks.add_task(process_file_background, media_id, sender, temp_filename)
 
-                # 3. BUTTON CLICKS (Save/Discard)
-                elif msg_type == 'interactive':
-                    btn_id = msg['interactive']['button_reply']['id']
+            # 3. BUTTON CLICKS
+            elif msg_type == 'interactive':
+                btn_id = msg['interactive']['button_reply']['id']
 
-                    # Check if user has a pending file action in memory
-                    if sender in pending_actions:
-                        action = pending_actions[sender]
+                if sender in pending_actions:
+                    action = pending_actions[sender]
 
-                        if btn_id == "save_file":
-                            send_message(sender, "🚀 Uploading to Drive...")
-                            try:
-                                drive_service = authenticate_drive(sender)
-                                upload_to_drive(drive_service, action['local_path'], action['new_name'],
-                                                action['drive_folder_id'])
-                                send_message(sender, f"✅ Saved to *{action['subject']}*")
-                            except Exception as e:
-                                send_message(sender, f"❌ Upload failed: {e}")
+                    if btn_id == "save_file":
+                        send_message(sender, "🚀 Uploading to Drive...")
+                        try:
+                            drive_service = authenticate_drive(sender)
+                            upload_to_drive(drive_service, action['local_path'], action['new_name'],
+                                            action['drive_folder_id'])
+                            send_message(sender, f"✅ Saved to *{action['subject']}*")
+                        except Exception as e:
+                            send_message(sender, f"❌ Upload failed: {e}")
 
-                            # Cleanup file
-                            if os.path.exists(action['local_path']): os.remove(action['local_path'])
-                            del pending_actions[sender]
+                        if os.path.exists(action['local_path']): os.remove(action['local_path'])
+                        del pending_actions[sender]
 
-                        elif btn_id == "discard_file":
-                            send_message(sender, "🚫 Discarded.")
-                            if os.path.exists(action['local_path']): os.remove(action['local_path'])
-                            del pending_actions[sender]
+                    elif btn_id == "discard_file":
+                        send_message(sender, "🚫 Discarded.")
+                        if os.path.exists(action['local_path']): os.remove(action['local_path'])
+                        del pending_actions[sender]
 
     except Exception as e:
-        print(f"Webhook Error: {e}")
+        print(f"❌ Webhook Error: {e}")
+        # Return 200 OK so Meta doesn't keep retrying the broken message
+        return Response(content="Internal Error", status_code=200)
 
-    return "OK"
+    return Response(content="OK", status_code=200)
+
 
 
 # --- VERIFY WEBHOOK ---
