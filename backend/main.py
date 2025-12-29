@@ -54,6 +54,8 @@ app.add_middleware(
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
 
 if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
     raise ValueError("❌ Missing Keys! Check your .env file.")
@@ -242,21 +244,21 @@ def auth_callback(request: Request):
     # 4. Redirect based on Status [CHANGE 2: UPDATED LOGIC]
     user = get_user(final_phone)
     status = user.get("status", "NEW")
+    # Get the live frontend URL from Render settings (or default to localhost for testing)
 
     if status == "ACTIVE":
         # User is fully set up, go to Dashboard
-        target_url = "http://localhost:5173/dashboard"
+        target_url = f"{frontend_url}/dashboard"
 
     elif status in ["CONNECTED", "AWAITING_SYLLABUS"]:
         # User has linked Google but hasn't set up folders/syllabus
-        target_url = "http://localhost:5173/setup"
+        target_url = f"{frontend_url}/setup"
 
     else:
         # User is likely still in verification stage or error
-        target_url = "http://localhost:5173/verify"
+        target_url = f"{frontend_url}/verify"
 
     return RedirectResponse(url=target_url, status_code=303)
-
 
 @app.post("/api/complete-setup")
 async def complete_setup(data: SetupRequest):
@@ -383,7 +385,7 @@ def logout(request: Request):
     request.session.clear()
 
     # 2. Redirect to the Frontend Login Page
-    return RedirectResponse("http://localhost:5173/login")
+    return RedirectResponse(f"{frontend_url}/login")
 
 
 def append_folders_to_drive(phone, root_folder_id, new_structure):
@@ -723,7 +725,7 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
                 send_message(sender,
                              "⏳ *Setup Incomplete* \n\n"
                              "Please finish setting up your subjects on the dashboard:\n"
-                             "👉 http://localhost:5173/setup"
+                             f"👉 {frontend_url}/setup"
                              )
 
                 # --- CASE C: ACTIVE USER (The Main Bot) ---
