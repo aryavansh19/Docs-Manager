@@ -33,7 +33,9 @@ load_dotenv()
 app = FastAPI()
 
 # 1. KEEP THIS: Required for Google OAuth (to remember user during redirects)
-app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string")
+app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string",max_age=3600,
+    same_site="None",   # 👈 Critical: Allows cross-site cookies
+    https_only=True)
 
 # 2. ADD THIS: Allow React (Port 5173) to talk to Python (Port 8000)
 origins = [
@@ -44,12 +46,14 @@ origins = [
 # In main.py
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all domains (easiest for setup)
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:5173",                 # Localhost for testing
+        "https://docs-manager-iota.vercel.app"   # 👈 Your EXACT Vercel Domain
+    ],
+    allow_credentials=True,    # This MUST be True for cookies to work
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # --- CONFIG ---
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
