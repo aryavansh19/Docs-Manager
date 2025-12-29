@@ -7,6 +7,8 @@ import {
     LayoutDashboard, ArrowUp, ArrowRightCircle
 } from "lucide-react";
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
 // --- ANIMATION VARIANTS ---
 const slideVariants = {
     enter: (direction) => ({
@@ -127,7 +129,7 @@ export default function Setup() {
     const fileInputRef = useRef(null);
 
     useEffect(() => {
-        axios.get('http://localhost:8001/api/dashboard-data', { withCredentials: true })
+        axios.get(`${API_URL}/api/dashboard-data`, { withCredentials: true })
             .then(res => {
                 setUserData(res.data);
                 if (res.data.root_folder_id) {
