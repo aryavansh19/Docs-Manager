@@ -240,29 +240,32 @@ def auth_callback(request: Request):
             return "❌ Account not found. Please go back and enter your phone number to Sign Up first."
 
     # 3. Save Updates
-    update_user(final_phone, "google_token", new_tokens)
-    update_user(final_phone, "name", user_name)
-    update_user(final_phone, "picture", user_pic)
-    update_user(final_phone, "email", google_email)
+        # 3. Save Updates
+        update_user(final_phone, "google_token", new_tokens)
+        update_user(final_phone, "name", user_name)
+        update_user(final_phone, "picture", user_pic)
+        update_user(final_phone, "email", google_email)
 
-    # 4. Redirect based on Status [CHANGE 2: UPDATED LOGIC]
-    user = get_user(final_phone)
-    status = user.get("status", "NEW")
-    # Get the live frontend URL from Render settings (or default to localhost for testing)
+        # 🛑 CRITICAL FIX: FORCE RE-SAVE SESSION
+        # Even if the session exists, we overwrite it.
+        # This forces the server to send a new 'Set-Cookie' header with the new 'SameSite=None' security rules.
+        request.session["user_phone"] = final_phone
 
-    if status == "ACTIVE":
-        # User is fully set up, go to Dashboard
-        target_url = f"{frontend_url}/dashboard"
+        # 4. Redirect based on Status
+        user = get_user(final_phone)
+        status = user.get("status", "NEW")
 
-    elif status in ["CONNECTED", "AWAITING_SYLLABUS"]:
-        # User has linked Google but hasn't set up folders/syllabus
-        target_url = f"{frontend_url}/setup"
+        # Define frontend_url (Make sure this matches your Vercel URL exactly)
+        frontend_url = os.getenv("FRONTEND_URL", "https://docs-manager-iota.vercel.app")
 
-    else:
-        # User is likely still in verification stage or error
-        target_url = f"{frontend_url}/verify"
+        if status == "ACTIVE":
+            target_url = f"{frontend_url}/dashboard"
+        elif status in ["CONNECTED", "AWAITING_SYLLABUS"]:
+            target_url = f"{frontend_url}/setup"
+        else:
+            target_url = f"{frontend_url}/verify"
 
-    return RedirectResponse(url=target_url, status_code=303)
+        return RedirectResponse(url=target_url, status_code=303)
 
 @app.post("/api/complete-setup")
 async def complete_setup(data: SetupRequest):
