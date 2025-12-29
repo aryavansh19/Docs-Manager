@@ -276,19 +276,21 @@ def auth_callback(request: Request):
     user = get_user(final_phone)
     status = user.get("status", "NEW")
 
-    # If they are NEW but just linked Google, upgrade them so they go to Setup
-    if status == "NEW":
-        update_user(final_phone, "status", "CONNECTED")
-        status = "CONNECTED"
-
     # Define frontend_url
     frontend_url = os.getenv("FRONTEND_URL", "https://docs-manager-iota.vercel.app")
 
     if status == "ACTIVE":
+        # Full user -> Dashboard
         target_url = f"{frontend_url}/dashboard"
+
     elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
+        # Partially setup -> Setup Wizard
         target_url = f"{frontend_url}/setup"
+
     else:
+        # === CHANGE IS HERE ===
+        # If status is "NEW", DO NOT auto-upgrade.
+        # Send them to /verify so they MUST send the WhatsApp message.
         target_url = f"{frontend_url}/verify"
 
     print(f"🚀 Redirecting {final_phone} to {target_url}")
