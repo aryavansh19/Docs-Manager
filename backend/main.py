@@ -47,8 +47,9 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",                 # Localhost for testing
-        "https://docs-manager-iota.vercel.app"   # 👈 Your EXACT Vercel Domain
+        "http://localhost:5173",
+        "https://aryavansh.dev",
+        "https://www.aryavansh.dev"
     ],
     allow_credentials=True,    # This MUST be True for cookies to work
     allow_methods=["*"],
@@ -585,6 +586,8 @@ async def create_folders_web(request: Request):
         except Exception as e:
             print(f"❌ Creation Error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/upload-syllabus")
 async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
     phone = request.session.get("user_phone")
