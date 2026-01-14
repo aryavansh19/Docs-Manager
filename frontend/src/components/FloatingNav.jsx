@@ -1,11 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useScroll, useMotionValueEvent } from "framer-motion";
 import { Menu, X, Terminal, ArrowRight } from "lucide-react";
 
 export default function FloatingNav() {
     const location = useLocation();
     const [isOpen, setIsOpen] = useState(false);
+    const [hidden, setHidden] = useState(false);
+    const { scrollY } = useScroll();
+
+    useMotionValueEvent(scrollY, "change", (latest) => {
+        // Hide navbar when scrolled past hero section (roughly one viewport height)
+        if (latest > window.innerHeight - 100) {
+            setHidden(true);
+        } else {
+            setHidden(false);
+        }
+    });
 
     const scrollToSection = (id) => {
         const element = document.getElementById(id);
@@ -23,9 +34,12 @@ export default function FloatingNav() {
         <>
             <motion.nav
                 initial={{ y: -100, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ duration: 0.8, ease: "easeOut" }}
-                className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-6xl"
+                animate={{
+                    y: hidden ? -100 : 0,
+                    opacity: hidden ? 0 : 1
+                }}
+                transition={{ duration: 0.3, ease: "easeInOut" }}
+                className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-5xl"
             >
                 <div className="rounded-full px-6 py-4 flex items-center justify-between bg-[#111111]/80 backdrop-blur-xl border border-white/10 shadow-2xl relative overflow-hidden">
 
@@ -35,7 +49,7 @@ export default function FloatingNav() {
                             <Terminal size={20} />
                         </div>
                         <span className="font-bold text-xl tracking-tight text-white hidden sm:block font-syne">
-                            SmartDoc
+                            DocFlow
                         </span>
                     </Link>
 
@@ -44,7 +58,6 @@ export default function FloatingNav() {
                         {[
                             { name: 'Features', id: 'features' },
                             { name: 'How it Works', id: 'how-it-works' },
-                            // { name: 'Showcase', id: 'photo-section' }
                         ].map((item) => (
                             <button
                                 key={item.name}
