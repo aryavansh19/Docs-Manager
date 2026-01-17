@@ -37,7 +37,7 @@ export default function AuthOptions() {
                     className="text-center mb-16"
                 >
                     <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 text-white">
-                        Welcome to <span className="text-blue-500">SmartDoc</span>
+                        Welcome to <span className="text-blue-500">Docs Organizer</span>
                     </h1>
                     <p className="text-white/50 max-w-md mx-auto">
                         Choose how you want to access your intelligent workspace.

@@ -36,7 +36,7 @@ export default function Login() {
                     <div className="p-1.5 rounded-md bg-white/5 group-hover:bg-white/10 transition-colors border border-white/10">
                         <Terminal size={16} />
                     </div>
-                    <span className="text-sm font-bold tracking-tight">SmartDoc.ai</span>
+                    <span className="text-sm font-bold tracking-tight">DocsFlow.tech</span>
                 </Link>
             </div>
 
