@@ -209,7 +209,7 @@ export default function Home() {
                         </motion.p>
 
                         <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
-                            <Link to="/signup" className="group inline-flex items-center gap-3 px-10 py-5 rounded-full bg-white text-black font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105 shadow-xl shadow-white/10">
+                            <Link to="/auth" className="group inline-flex items-center gap-3 px-10 py-5 rounded-full bg-white text-black font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105 shadow-xl shadow-white/10">
                                 Start Building Now
                                 <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                             </Link>
@@ -409,7 +409,7 @@ export default function Home() {
                                     <p className="text-gray-400 text-lg leading-relaxed">Open source DocFlow. WhatsApp + AI + Drive.<br />Join thousands organizing smarter.</p>
                                 </div>
                                 <div className="flex flex-col justify-center gap-4">
-                                    <Link to="/signup" className="group flex items-center justify-center gap-3 px-8 py-5 bg-white text-black rounded-2xl font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105">
+                                    <Link to="/auth" className="group flex items-center justify-center gap-3 px-8 py-5 bg-white text-black rounded-2xl font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105">
                                         <MessageSquare size={20} />
                                         Start Organizing Free
                                         <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
