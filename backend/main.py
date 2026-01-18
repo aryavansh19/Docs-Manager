@@ -5,9 +5,6 @@ import json
 from fastapi import FastAPI, Request, BackgroundTasks, Response
 from dotenv import load_dotenv
 
-import io
-from googleapiclient.http import MediaIoBaseDownload
-
 # --- IMPORTS FROM OUR NEW MODULES ---
 from database import get_user, update_user, get_user_by_email
 from syllabus_parser import parse_syllabus_with_gemini
@@ -60,7 +57,6 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-
 
 if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
     raise ValueError("❌ Missing Keys! Check your .env file.")
