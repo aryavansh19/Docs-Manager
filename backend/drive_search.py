@@ -1,82 +1,111 @@
-from google_auth import authenticate_drive
+from supabase_client import supabase
+from google_auth import get_drive_service
 
 
-def search_drive_files(phone_number, query_text, folder_id=None):
-    """
-    Searches for files matching ALL keywords in the query, regardless of order.
-    Example: "Adhar Saini" -> Finds "Important Documents_Aadhar Card_Aryavansh Saini.pdf"
-    """
+# --- HELPER: ROBUST FOLDER DETECTION ---
+def find_folder_match(user, query):
+    folder_map = user.get('folder_map', {})
+    query = query.lower().strip()
+
+    # We explicitly define the logic here to match "Subjects"
+    for subject, data in folder_map.items():
+        subject_clean = subject.lower()
+
+        # LOGIC A: User typed a shortcut? (e.g. "Full Stack" inside "Full Stack Web Dev")
+        match_a = query in subject_clean
+
+        # LOGIC B: User typed a long sentence? (e.g. "Full Stack Web Dev" inside "Give Full Stack Web Dev please")
+        match_b = subject_clean in query
+
+        if match_a or match_b:
+            return {
+                "type": "SUBJECT",
+                "name": subject,
+                "id": data['id'],
+                "children": data.get('units', {})
+            }
+
+    # Repeat the same logic for Units
+    for subject, data in folder_map.items():
+        units = data.get('units', {})
+        for unit_name, unit_id in units.items():
+            unit_clean = unit_name.lower()
+
+            # Check A & B for units too
+            if (query in unit_clean) or (unit_clean in query):
+                return {
+                    "type": "UNIT",
+                    "name": unit_name,
+                    "parent": subject,
+                    "id": unit_id,
+                    "children": None
+                }
+    return None
+
+
+# --- HELPER: SMART SEARCH SUPABASE ---
+def search_files_in_db(user_id, query):
+    # 1. Fetch ALL user's files
+    response = supabase.table('files').select("*").eq("user_id", user_id).execute()
+    all_files = response.data
+
+    if not all_files: return []
+
+    # 2. PREPARE THE QUERY
+    # Convert to lowercase
+    raw_query = query.lower()
+
+    # Define "Stop Words" (Filler words to ignore)
+    stop_words = ["find", "search", "get", "give", "show", "me", "my", "the", "a", "an", "file", "document",
+                  "screenshot"]
+
+    # Split sentence into words and remove stop words
+    # Example: "Give my microsoft screenshot" -> ["give", "my", "microsoft", "screenshot"] -> ["microsoft"]
+    query_words = [word for word in raw_query.split() if word not in stop_words]
+
+    # If the user ONLY typed stop words (e.g. "Get screenshot"), keep the original words to avoid empty search
+    if not query_words:
+        query_words = raw_query.split()
+
+    matches = []
+
+    # 3. SCORE-BASED MATCHING
+    for file in all_files:
+        score = 0
+
+        # Prepare File Data for searching
+        file_name = file['file_name'].lower()
+        subject = (file.get('subject') or "").lower()
+        # Join all tags into one long string for easy searching
+        tags_text = " ".join([t.lower() for t in (file.get('tags') or [])])
+
+        # Check every word in the user's query
+        for word in query_words:
+            # If word appears in Name, Subject, or Tags -> Add points
+            if word in file_name: score += 3  # High priority for filename
+            if word in tags_text: score += 2  # Medium priority for tags
+            if word in subject:   score += 1  # Low priority for subject
+
+        # If the file has any match (score > 0), add it to results
+        if score > 0:
+            file['search_score'] = score  # Save score to sort later
+            matches.append(file)
+
+    # 4. SORT BY RELEVANCE
+    # Files with higher scores (more matching words) appear first
+    matches.sort(key=lambda x: x['search_score'], reverse=True)
+
+    return matches
+
+# --- HELPER: GET CLICKABLE DRIVE LINK ---
+def get_drive_link(google_token, file_id):
     try:
-        # 1. Authenticate
-        service = authenticate_drive(phone_number)
-
-        # 2. Smart Query Cleaning
-        # Remove "Give", "Get" etc.
-        stopwords = ["give", "get", "find", "search", "show", "me", "my", "the", "notes", "file"]
-        clean_text = query_text.lower()
-        for word in stopwords:
-            clean_text = clean_text.replace(f"{word} ", " ")  # Replace with space
-
-        # 3. Split into Keywords (The Fix)
-        # "Adhar Saini" -> ["adhar", "saini"]
-        keywords = clean_text.split()
-
-        if not keywords:
-            print("⚠️ Query is empty after cleaning.")
-            return []
-
-        # 4. Build Dynamic Query
-        # We want: (name contains 'word1') AND (name contains 'word2') ...
-        query_parts = ["trashed = false"]
-
-        for word in keywords:
-            # Sanitize input
-            safe_word = word.replace("'", "").replace('"', "")
-            query_parts.append(f"name contains '{safe_word}'")
-
-        # Combine with 'and'
-        q_base = " and ".join(query_parts)
-
-        # 5. Get Folder Name (Log only)
-        folder_name_log = "Global"
-        if folder_id:
-            try:
-                f_meta = service.files().get(fileId=folder_id, fields="name").execute()
-                folder_name_log = f_meta.get('name', folder_id)
-            except:
-                pass
-
-        print(f"🔎 SEARCHING: {keywords} (Location: {folder_name_log})")
-        print(f"   Query: {q_base}")
-
-        # 6. ATTEMPT 1: Specific Folder
-        if folder_id:
-            q_specific = q_base + f" and '{folder_id}' in parents"
-
-            results = service.files().list(
-                q=q_specific,
-                pageSize=5,
-                fields="files(id, name, webViewLink, mimeType)"
-            ).execute()
-
-            files = results.get('files', [])
-            if files:
-                print(f"   ✅ Found {len(files)} matches in '{folder_name_log}'.")
-                return files
-
-        # 7. ATTEMPT 2: Global Search (Fallback)
-        print("   👉 Global Fallback Search...")
-        results_global = service.files().list(
-            q=q_base,
-            pageSize=10,
-            fields="files(id, name, webViewLink, mimeType)"
+        service = get_drive_service(google_token)
+        file = service.files().get(
+            fileId=file_id,
+            fields="webViewLink, webContentLink, iconLink"
         ).execute()
-
-        files = results_global.get('files', [])
-        print(f"   ✅ Found {len(files)} matches globally.")
-
-        return files
-
+        return file.get('webViewLink')
     except Exception as e:
-        print(f"❌ SEARCH ERROR: {e}")
-        return []
+        print(f"❌ Link Fetch Error: {e}")
+        return "https://drive.google.com"  # Fallback

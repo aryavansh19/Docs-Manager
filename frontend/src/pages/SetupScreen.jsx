@@ -125,7 +125,7 @@ export default function Setup() {
             // Get Token to secure the upload
             const { data: { session } } = await supabase.auth.getSession();
 
-            const res = await axios.post(`${API_URL}/upload-syllabus`, formData, {
+            const res = await axios.post(`${API_URL}/api/upload-syllabus`, formData, {
                 headers: {
                     "Content-Type": "multipart/form-data",
                     "Authorization": `Bearer ${session?.access_token}` // Send Token!
