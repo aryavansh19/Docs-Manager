@@ -12,7 +12,7 @@ from test_sorting import ask_gemini_to_sort, upload_to_drive, authenticate_drive
 from drive_search import search_drive_files
 from test_sorting import parse_search_intent # Or wherever you pasted the function above
 
-from folder_creator import build_drive_structure
+from folder_creator import build_drive_structure, append_folders_to_drive
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,8 +25,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 
+from fastapi import FastAPI, Request, Response, BackgroundTasks
+from supabase import create_client, Client
+from typing import List, Dict, Any
+
+
 
 load_dotenv()
+
+# --- 1. SETUP SUPABASE CONNECTION ---
+# Make sure these are in your .env file!
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Use Service Role Key for backend
+
+# Initialize Client
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 app = FastAPI()
 
 # 1. KEEP THIS: Required for Google OAuth (to remember user during redirects)
@@ -43,11 +57,7 @@ origins = [
 # In main.py
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://aryavansh.dev",
-        "https://www.aryavansh.dev"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,    # This MUST be True for cookies to work
     allow_methods=["*"],
     allow_headers=["*"],
@@ -128,461 +138,270 @@ def download_media(media_id, filename):
     except:
         return False
 
+#
+# @app.post("/api/complete-setup")
+# async def complete_setup(data: SetupRequest):
+#     print(f"🚀 Starting Setup for {data.phone} with subjects: {data.subjects}")
+#
+#     # A. Validate User
+#     user = get_user(data.phone)
+#     if not user:
+#         return JSONResponse({"error": "User not found"}, status_code=404)
+#
+#     # B. Prepare the Folder Structure
+#     # We turn the list ["Physics"] into {"Physics": ["Unit 1", "Unit 2"...]}
+#     # This is what your Drive function expects.
+#     final_syllabus = {
+#         subj: ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"]
+#         for subj in data.subjects
+#     }
+#
+#     # C. Create Folders in Google Drive
+#     try:
+#         # NOTE: This function (build_drive_structure) must exist in your code.
+#         # It connects to Google Drive and makes the folders.
+#         root_id, new_map = build_drive_structure(data.phone, final_syllabus)
+#
+#         # D. Update Database
+#         update_user(data.phone, "folder_map", new_map)
+#         update_user(data.phone, "root_folder_id", root_id)
+#         update_user(data.phone, "status", "ACTIVE")  # <--- Important! This unlocks the dashboard.
+#
+#         return {"status": "success"}
+#
+#     except Exception as e:
+#         print(f"❌ Setup Error: {e}")
+#         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+#
+#
 
-# --- ROUTE 1: SMART LOGIN HANDLER ---
-@app.get("/login")
-def login(request: Request):
-    # Check if phone was provided (Door A: Signup)
-    phone = request.query_params.get("phone")
+# Add to main.py
+@app.get("/")
+async def health_check():
+    return {"status": "online", "message": "Python Backend is runnning!"}
 
-    # We still try to save to session as a backup, but we don't rely on it
-    if phone:
-        print(f"DEBUG: Signup Request for {phone}")
-        request.session["user_phone"] = phone
-    else:
-        print(f"DEBUG: Direct Login Request (No Phone)")
-        if "user_phone" in request.session:
-            del request.session["user_phone"]
 
-    # --- GOOGLE OAUTH SETUP ---
+# --- HELPER: Get Drive Service (Put this near other helpers) ---
+def get_drive_service(refresh_token):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
-    current_backend_url = os.getenv("BACKEND_URL", "http://localhost:8001")
-    redirect_uri = f"{current_backend_url}/auth/callback"
-
-    scope = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"
-
-    # 🛑 CRITICAL FIX: PREPARE THE 'STATE' PARAMETER
-    # If we have a phone, we put it in the 'state'. If not, we send "null".
-    # This ensures the phone number survives the trip to Google and back.
-    state_value = phone if phone else "null"
-
-    # Add &state={state_value} to the URL 👇
-    url = (
-        f"https://accounts.google.com/o/oauth2/v2/auth?"
-        f"response_type=code&"
-        f"client_id={client_id}&"
-        f"redirect_uri={redirect_uri}&"
-        f"scope={scope}&"
-        f"access_type=offline&"
-        f"prompt=select_account&"
-        f"state={state_value}"  # <--- THIS IS THE MAGIC FIX
-    )
-
-    return RedirectResponse(url)
-
-# --- ROUTE 2: THE CALLBACK (THE BRAIN) ---
-@app.get("/auth/callback")
-def auth_callback(request: Request):
-    print("🚀 Auth Callback started!")
-
-    code = request.query_params.get("code")
-
-    # [CHANGE 1] Get phone from the URL 'backpack' (State)
-    state_phone = request.query_params.get("state")
-
-    # [CHANGE 2] Get phone from Session (Backup)
-    session_phone = request.session.get("user_phone")
-
-    print(f"DEBUG: Code: {bool(code)} | State: {state_phone} | Session: {session_phone}")
-
-    if not code:
-        return "❌ Error: Missing code."
-
-    # 1. Exchange Code for Tokens
-    token_url = "https://oauth2.googleapis.com/token"
-
-    # Use environment variable for backend URL
-    current_backend_url = os.getenv("BACKEND_URL", "http://localhost:8001")
-    redirect_uri = f"{current_backend_url}/auth/callback"
-
-    data = {
-        "code": code,
-        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-        "redirect_uri": redirect_uri,
-        "grant_type": "authorization_code"
-    }
-
-    try:
-        response = requests.post(token_url, data=data)
-        new_tokens = response.json()
-        access_token = new_tokens.get("access_token")
-
-        # 2. Fetch Google Profile
-        user_info = requests.get(
-            "https://www.googleapis.com/oauth2/v1/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"}
-        ).json()
-
-        google_email = user_info.get("email")
-        user_name = user_info.get("name", "Student")
-        user_pic = user_info.get("picture", "")
-
-        print(f"DEBUG: Google Email found: {google_email}")
-
-    except Exception as e:
-        return f"❌ Error connecting to Google: {str(e)}"
-
-    final_phone = None
-
-    # --- LOGIC BRANCHING (Fixed) ---
-
-    # [CHANGE 3] Check State FIRST, then Session. If either exists, we are in "Door A" (Signup/Linking)
-    if (state_phone and state_phone != "null") or session_phone:
-        # Use state_phone if available, otherwise fallback to session_phone
-        target_phone = state_phone if (state_phone and state_phone != "null") else session_phone
-
-        print(f"🔗 Linking {google_email} to {target_phone}")
-        update_user(target_phone, "email", google_email)
-        final_phone = target_phone
-
-    else:
-        # === DOOR B: DIRECT LOGIN ===
-        # We don't have a phone number, so we must find it using the email
-        print(f"🔍 Looking up user by email: {google_email}")
-        existing_user = get_user_by_email(google_email)
-
-        if existing_user:
-            final_phone = existing_user['phone']
-
-            # Handle Refresh Token logic (Keep old refresh token if new one is missing)
-            if existing_user.get("google_token"):
-                old_tokens = existing_user["google_token"]
-                if isinstance(old_tokens, str):
-                    old_tokens = json.loads(old_tokens)
-
-                if "refresh_token" not in new_tokens:
-                    new_tokens["refresh_token"] = old_tokens.get("refresh_token")
-        else:
-            # If we can't find the user and they didn't provide a phone, we can't log them in.
-            return RedirectResponse(
-                url=f"{os.getenv('FRONTEND_URL')}/?error=account_not_found"
-            )
-
-    # 3. Save Updates (Running for EVERYONE now)
-    update_user(final_phone, "google_token", new_tokens)
-    update_user(final_phone, "name", user_name)
-    update_user(final_phone, "picture", user_pic)
-    update_user(final_phone, "email", google_email)
-
-    # 🛑 FORCE COOKIE REFRESH
-    # This is critical for Vercel <-> Render communication
-    request.session["user_phone"] = final_phone
-
-    # 4. Redirect based on Status
-    user = get_user(final_phone)
-    status = user.get("status", "NEW")
-
-    # Define frontend_url
-    frontend_url = os.getenv("FRONTEND_URL", "https://docs-manager-iota.vercel.app")
-
-    if status == "ACTIVE":
-        # Full user -> Dashboard
-        target_url = f"{frontend_url}/dashboard"
-
-    elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
-        # Partially setup -> Setup Wizard
-        target_url = f"{frontend_url}/setup"
-
-    else:
-        # === CHANGE IS HERE ===
-        # If status is "NEW", DO NOT auto-upgrade.
-        # Send them to /verify so they MUST send the WhatsApp message.
-        target_url = f"{frontend_url}/verify"
-
-    print(f"🚀 Redirecting {final_phone} to {target_url}")
-    return RedirectResponse(url=target_url, status_code=303)
-
-
-@app.post("/api/complete-setup")
-async def complete_setup(data: SetupRequest):
-    print(f"🚀 Starting Setup for {data.phone} with subjects: {data.subjects}")
-
-    # A. Validate User
-    user = get_user(data.phone)
-    if not user:
-        return JSONResponse({"error": "User not found"}, status_code=404)
-
-    # B. Prepare the Folder Structure
-    # We turn the list ["Physics"] into {"Physics": ["Unit 1", "Unit 2"...]}
-    # This is what your Drive function expects.
-    final_syllabus = {
-        subj: ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"]
-        for subj in data.subjects
-    }
-
-    # C. Create Folders in Google Drive
-    try:
-        # NOTE: This function (build_drive_structure) must exist in your code.
-        # It connects to Google Drive and makes the folders.
-        root_id, new_map = build_drive_structure(data.phone, final_syllabus)
-
-        # D. Update Database
-        update_user(data.phone, "folder_map", new_map)
-        update_user(data.phone, "root_folder_id", root_id)
-        update_user(data.phone, "status", "ACTIVE")  # <--- Important! This unlocks the dashboard.
-
-        return {"status": "success"}
-
-    except Exception as e:
-        print(f"❌ Setup Error: {e}")
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
-
-
-@app.get("/api/dashboard-data")
-def get_dashboard_data(request: Request):
-    phone = request.session.get("user_phone")
-    if not phone: return JSONResponse({"error": "Not logged in"}, status_code=401)
-
-    user = get_user(phone)
-    if not user: return JSONResponse({"error": "User not found"}, status_code=404)
-
-    return {
-        "phone": phone,
-        "name": user.get("name"),
-        "picture": user.get("picture"),
-        "status": user.get("status"),
-        "syllabus": user.get("temp_syllabus_list", {}),
-        "folder_map": user.get("folder_map", {}),
-        # 👇 ADD THIS LINE HERE 👇
-        "root_folder_id": user.get("root_folder_id")
-    }
-
-
-@app.get("/api/drive/browse")
-def browse_drive(request: Request, folder_id: str = None):
-    # 1. Auth Check
-    phone = request.session.get("user_phone")
-    user = get_user(phone)
-    if not user or not user.get("google_token"):
-        return JSONResponse({"error": "Auth required"}, 401)
-
-    # 2. Setup Drive Service
-    token_info = user['google_token']
-
-    # --- FIX: Convert String to JSON if needed ---
-    if isinstance(token_info, str):
-        try:
-            token_info = json.loads(token_info)
-        except Exception as e:
-            print(f"❌ Token Parsing Error: {e}")
-            return JSONResponse({"error": "Invalid Token Format"}, 500)
-    # --------------------------------------------
-
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
     creds = Credentials(
-        token=token_info['access_token'],
-        refresh_token=token_info.get('refresh_token'),
+        None, refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.getenv("GOOGLE_CLIENT_ID"),
-        client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+        client_id=client_id, client_secret=client_secret
     )
-    service = build('drive', 'v3', credentials=creds)
+    return build('drive', 'v3', credentials=creds)
 
-    # 3. Determine which folder to look in
-    target_id = folder_id
-    if not target_id:
-        target_id = user.get("root_folder_id")
 
-    if not target_id:
-        return {"folders": [], "files": []}
-
+# --- API: BROWSE DRIVE FOLDER ---
+@app.get("/api/drive/browse")
+async def browse_drive(request: Request, folder_id: str):
     try:
-        # 4. Query Drive
-        query = f"'{target_id}' in parents and trashed=false"
+        # 1. AUTHENTICATION
+        auth_header = request.headers.get('Authorization')
+        if not auth_header: return Response("Missing Token", 401)
+        token = auth_header.replace("Bearer ", "")
+        user_res = supabase.auth.get_user(token)
+        if not user_res.user: return Response("Invalid Token", 401)
+        user_id = user_res.user.id
+
+        # 2. GET CREDENTIALS
+        profile = supabase.table('profiles').select("google_token, root_folder_id").eq('id', user_id).single().execute()
+        google_data = profile.data.get('google_token')
+        if not google_data: return Response("Google Drive not linked", 400)
+
+        service = get_drive_service(google_data['refresh_token'])
+
+        # ---------------------------------------------------------
+        # 3. VERIFY EXISTENCE (The Fix)
+        # ---------------------------------------------------------
+        try:
+            # We try to get the folder's metadata.
+            # If it's deleted/trashed, this throws an error.
+            folder_meta = service.files().get(
+                fileId=folder_id,
+                fields="id, name, trashed"
+            ).execute()
+
+            if folder_meta.get('trashed') is True:
+                raise Exception("Folder is in Trash")
+
+        except Exception as e:
+            print(f"⚠️ Folder {folder_id} not found or trashed.")
+
+            # OPTIONAL: If the ROOT folder is gone, we can reset the user's status!
+            saved_root = profile.data.get('root_folder_id')
+            if saved_root == folder_id:
+                print("🚨 Root folder deleted! Resetting user status...")
+                supabase.table('profiles').update({
+                    "status": "CONNECTED",  # Send them back to Setup
+                    "root_folder_id": None,
+                    "folder_map": None
+                }).eq('id', user_id).execute()
+
+                return JSONResponse({
+                    "error": "ROOT_DELETED",
+                    "message": "Your main folder was deleted. Please run setup again."
+                }, status_code=404)
+
+            return JSONResponse({
+                "error": "FOLDER_DELETED",
+                "message": "This folder no longer exists on Drive."
+            }, status_code=404)
+
+        # ---------------------------------------------------------
+        # 4. FETCH FILES (Only if it exists)
+        # ---------------------------------------------------------
+        query = f"'{folder_id}' in parents and trashed=false"
         results = service.files().list(
             q=query,
-            fields="files(id, name, mimeType, webViewLink, iconLink)",
-            orderBy="folder, name"
+            pageSize=100,
+            fields="files(id, name, mimeType, iconLink, webViewLink, thumbnailLink)"
         ).execute()
 
         items = results.get('files', [])
 
-        # 5. Separate logic
         folders = []
         files = []
+
         for item in items:
+            clean_item = {
+                "id": item['id'],
+                "name": item['name'],
+                "mimeType": item['mimeType'],
+                "link": item['webViewLink']
+            }
             if item['mimeType'] == 'application/vnd.google-apps.folder':
-                folders.append(item)
+                folders.append(clean_item)
             else:
-                files.append(item)
+                files.append(clean_item)
 
         return {"folders": folders, "files": files}
 
     except Exception as e:
-        print(f"Drive API Error: {e}")
-        return JSONResponse({"error": str(e)}, 500)
+        print(f"❌ Browse Error: {str(e)}")
+        return Response(f"Error: {str(e)}", 500)
 
 
-@app.get("/logout")
-def logout(request: Request):
-    # 1. Clear the session cookie
-    request.session.clear()
 
-    # 2. Redirect to the Frontend Login Page
-    return RedirectResponse(f"{frontend_url}/login")
+# 1. Define the Data Model (Matches what Setup.jsx sends)
+class SubjectItem(BaseModel):
+    name: str
+    units: List[str] = []
 
 
-def append_folders_to_drive(phone, root_folder_id, new_structure):
-    """
-    Creates ONLY the folders in 'new_structure' inside the EXISTING 'root_folder_id'.
-    Returns a dictionary of the newly created folders.
-    """
+class CreateFoldersRequest(BaseModel):
+    subjects: List[SubjectItem]
 
-    # 1. USE YOUR EXISTING AUTH FUNCTION
-    # This returns the 'service' object directly
-    service = authenticate_drive(phone)
 
-    created_map = {}
-    print(f"📂 Appending to Root ID: {root_folder_id}")
+# --- BACKGROUND WORKER (Add to main.py) ---
+async def run_folder_creation_worker(user_id: str, phone: str, refresh_token: str, structure: dict, root_id: str = None,
+                                     existing_map: dict = None):
+    print(f"👷‍♂️ WORKER: Starting folder creation for {phone}...")
 
-    for subject_name, units in new_structure.items():
-        try:
-            # 2. Create Subject Folder
-            file_metadata = {
-                'name': subject_name,
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [root_folder_id]
-            }
-            subject_folder = service.files().create(body=file_metadata, fields='id').execute()
-            subject_id = subject_folder.get('id')
+    try:
+        new_map = {}
+        final_root_id = root_id
 
-            # 3. Add to local map (to save to DB later)
-            created_map[subject_name] = {
-                "id": subject_id,
-                "units": {}
-            }
+        # --- MODE 1: APPEND (If Root Exists) ---
+        if root_id:
+            items_to_add = {}
+            for subj, units in structure.items():
+                if subj not in (existing_map or {}):
+                    items_to_add[subj] = units
 
-            # 4. Create Unit Subfolders
-            for unit_name in units:
-                unit_metadata = {
-                    'name': unit_name,
-                    'mimeType': 'application/vnd.google-apps.folder',
-                    'parents': [subject_id]
-                }
-                unit_folder = service.files().create(body=unit_metadata, fields='id').execute()
-                created_map[subject_name]["units"][unit_name] = unit_folder.get('id')
+            if items_to_add:
+                # Assuming append_folders_to_drive is imported
+                new_map = append_folders_to_drive(refresh_token, root_id, items_to_add)
+                if existing_map:
+                    existing_map.update(new_map)
+                    new_map = existing_map
 
-            print(f"✅ Created {subject_name}")
+                    # --- MODE 2: FRESH SETUP (No Root) ---
+        else:
+            # Assuming build_drive_structure is imported
+            final_root_id, new_map = build_drive_structure(refresh_token, structure, folder_name_suffix=phone)
 
-        except Exception as e:
-            print(f"❌ Failed to create {subject_name}: {e}")
+        # SAVE TO SUPABASE
+        print(f"💾 WORKER: Saving data to Supabase...")
+        supabase.table('profiles').update({
+            "folder_map": new_map,
+            "root_folder_id": final_root_id,
+            "status": "ACTIVE"
+        }).eq('id', user_id).execute()
 
-    return created_map
+        send_message(phone, "✅ *All set!* Your folders are ready.")
+        print(f"✅ WORKER: Finished successfully for {phone}")
+
+    except Exception as e:
+        print(f"❌ WORKER FAILED: {str(e)}")
 
 
 @app.post("/create-folders")
-async def create_folders_web(request: Request):
-    phone = request.session.get("user_phone")
-    if not phone: return RedirectResponse("/")
+async def create_folders_web(request: Request, background_tasks: BackgroundTasks):
+    print("🔔 API: Connection received! Parsing data...")  # <--- THIS WILL PRINT NOW
 
-    # 1. Get Inputs
-    form = await request.form()
-    selected_subjects = form.getlist("selected_subjects")  # List of subjects to create
+    try:
+        # 1. READ BODY MANUALLY (Prevents validation hangs)
+        body = await request.json()
+        print(f"📦 API: Received Data: {body}")
 
-    # 2. Get User Data
-    user = get_user(phone)
-    root_id = user.get("root_folder_id")
+        # Extract subjects safely
+        subjects_list = body.get('subjects', [])
+        structure = {item['name']: item.get('units', []) for item in subjects_list}
 
-    # Load Syllabus Data (to get units)
-    full_syllabus_str = user.get("temp_syllabus_list", "{}")
-    full_syllabus = {}
-    if isinstance(full_syllabus_str, str):
-        try:
-            full_syllabus = json.loads(full_syllabus_str)
-        except:
-            full_syllabus = {}
-    elif isinstance(full_syllabus_str, dict):
-        full_syllabus = full_syllabus_str
+        # 2. AUTHENTICATION
+        auth_header = request.headers.get('Authorization')
+        if not auth_header: return Response("Missing Token", 401)
 
-    # Load Existing Map (to avoid duplicates or data loss)
-    existing_map_str = user.get("folder_map", "{}")
-    existing_map = {}
-    if isinstance(existing_map_str, str):
-        try:
-            existing_map = json.loads(existing_map_str)
-        except:
-            existing_map = {}
-    elif isinstance(existing_map_str, dict):
-        existing_map = existing_map_str
+        token = auth_header.replace("Bearer ", "")
+        user_res = supabase.auth.get_user(token)
+        if not user_res.user: return Response("Invalid Token", 401)
 
-    # ======================================================
-    # 🛑 MODE 1: APPEND (If Root Folder Exists)
-    # ======================================================
-    if root_id:
-        print("🔄 Mode: APPEND (Adding to existing workspace)")
+        user_id = user_res.user.id
 
-        # Build structure ONLY for the selected subjects
-        structure_to_add = {}
-        for subj in selected_subjects:
-            # Skip if folder already exists in DB map
-            if subj in existing_map:
-                print(f"⚠️ Skipping {subj}, already exists.")
-                continue
-            structure_to_add[subj] = full_syllabus.get(subj, [])
+        # 3. GET USER DETAILS
+        profile = supabase.table('profiles').select("*").eq('id', user_id).single().execute()
+        user = profile.data
 
-        if not structure_to_add:
-            return JSONResponse({"status": "success", "message": "No new folders to create."})
+        google_data = user.get('google_token')
+        if not google_data or 'refresh_token' not in google_data:
+            print("❌ API Error: Google Drive not linked")
+            return Response("Google Drive not linked", 400)
 
-        # Call the Helper
-        newly_created_map = append_folders_to_drive(phone, root_id, structure_to_add)
+        refresh_token = google_data['refresh_token']
 
-        # MERGE: Add new folders to existing map
-        existing_map.update(newly_created_map)
+        # 4. INJECT DEFAULTS (For new users)
+        if not user.get('root_folder_id'):
+            defaults = {
+                "Important Documents": ["Aadhar Card", "PAN Card"],
+                "Screenshots": [],
+                "Identity Cards": [],
+                "Personal": [],
+                "Imported Documents": []
+            }
+            for k, v in defaults.items():
+                if k not in structure: structure[k] = v
 
-        # Save to DB
-        update_user(phone, "folder_map", existing_map)
+        # 5. START BACKGROUND WORKER
+        background_tasks.add_task(
+            run_folder_creation_worker,
+            user_id=user_id,
+            phone=user.get('phone'),
+            refresh_token=refresh_token,
+            structure=structure,
+            root_id=user.get('root_folder_id'),
+            existing_map=user.get('folder_map')
+        )
 
-        return JSONResponse({"status": "success", "message": "New subjects added successfully"})
+        print("🚀 API: Background task started. Replying to Frontend.")
+        return {"status": "processing", "message": "Creation started"}
 
-
-    # ======================================================
-    # 🚀 MODE 2: INITIAL SETUP (If No Root Folder)
-    # ======================================================
-    else:
-        print("✨ Mode: INITIAL SETUP (Creating Root + Defaults)")
-
-        # Build structure for selected subjects
-        final_structure = {}
-        for subj in selected_subjects:
-            final_structure[subj] = full_syllabus.get(subj, [])
-
-        # INJECT DEFAULTS (Only doing this because it's the first run)
-        defaults = {
-            "Important Documents": ["Aadhar Card", "PAN Card", "Resumes", "Mark sheets"],
-            "Screenshots": ["Notes", "Receipts", "Payments"],
-            "Identity Cards": ["College ID", "Govt ID"],
-            "Personal": [],
-            "Imported Documents": []
-        }
-        for k, v in defaults.items():
-            if k not in final_structure:
-                final_structure[k] = v
-
-        # Create EVERYTHING (Root + Children)
-        try:
-            new_root_id, new_map = build_drive_structure(phone, final_structure)
-
-            update_user(phone, "folder_map", new_map)
-            update_user(phone, "root_folder_id", new_root_id)
-            update_user(phone, "status", "ACTIVE")
-
-            # Message 1: Confirmation
-            send_message(phone, "✅ *Setup Complete!*\nYour dashboard and folders are ready.")
-
-            # Message 2: How to use (Onboarding)
-            intro_msg = (
-                "🚀 *How to use me:*\n\n"
-                "1️⃣ *Save Files:* Send any image or PDF here. I will analyze it and auto-sort it into the correct Subject folder.\n\n"
-                "2️⃣ *Find Files:* Just ask things like _'Get Physics notes'_ or _'Find Unit 1 papers'_ and I'll fetch them instantly!"
-            )
-            send_message(phone, intro_msg)
-
-            return JSONResponse({"status": "success", "message": "Workspace created successfully"})
-
-        except Exception as e:
-            print(f"❌ Creation Error: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
-
+    except Exception as e:
+        print(f"❌ API CRASH: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return Response(f"Internal Error: {str(e)}", 500)
 
 @app.post("/upload-syllabus")
 async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
@@ -706,96 +525,92 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
         data = await request.json()
 
         # ---------------------------------------------------------
-        # 🛡️ 1. SAFETY CHECKS (Prevent Crashing on Status Updates)
+        # 🛡️ 1. SAFETY CHECKS (Standard Meta Boilerplate)
         # ---------------------------------------------------------
-        # Check if 'entry' exists
-        if not data.get('entry'):
-            return Response(content="No entry", status_code=200)
+        if not data.get('entry') or not data['entry'][0].get('changes'):
+            return Response(content="No valid entry", status_code=200)
 
-        # Get the first entry safely
-        entry_list = data['entry']
-        if not entry_list:
-            return Response(content="Empty entry list", status_code=200)
+        value = data['entry'][0]['changes'][0].get('value')
 
-        changes_list = entry_list[0].get('changes')
-        if not changes_list:
-            return Response(content="No changes", status_code=200)
-
-        # Get the value object
-        value = changes_list[0].get('value')
-        if not value:
-            return Response(content="No value", status_code=200)
-
-        # 🛑 IGNORE STATUS UPDATES (Sent, Delivered, Read)
-        # These updates don't have 'messages', so we skip them to avoid crashes.
-        if 'messages' not in value:
+        # Ignore status updates (read receipts, etc.)
+        if not value or 'messages' not in value:
             return Response(content="Status update ignored", status_code=200)
 
         # ---------------------------------------------------------
-        # 📩 2. PROCESS ACTUAL MESSAGE
+        # 📩 2. EXTRACT MESSAGE INFO
         # ---------------------------------------------------------
         msg = value['messages'][0]
-        sender = msg['from']
+        sender = msg['from']  # The phone number
         msg_type = msg['type']
 
-        # 🛡️ SAFETY CHECK: Handle users who aren't in DB yet
-        user = get_user(sender)
+        # ---------------------------------------------------------
+        # 🔍 3. SUPABASE LOOKUP (Replacing get_user)
+        # ---------------------------------------------------------
+        user = {}
+        status = "NEW"
 
-        if user:
-            status = user.get('status', 'NEW')
-        else:
-            # If user is None (not found), treat them as NEW and use empty dict to prevent crashes
-            status = "NEW"
-            user = {}
+        # Query the 'profiles' table for this phone number
+        try:
+            response = supabase.table('profiles').select("*").eq("phone", sender).execute()
+            if response.data and len(response.data) > 0:
+                user = response.data[0]  # Get the first result
+                status = user.get('status', 'NEW')
+        except Exception as e:
+            print(f"⚠️ DB Error: {e}")
 
-            # ============================================================
-        # 🚀 3. VERIFICATION INTERCEPTOR
+        # ============================================================
+        # 🚀 4. VERIFICATION INTERCEPTOR (The Fix)
         # ============================================================
         if msg_type == 'text':
-            # Safely get body (some text messages might be empty or location pins)
             text_body = msg.get('text', {}).get('body', '').strip().upper()
 
             if text_body == "VERIFY":
-                # Ensure user exists and has google_token
-                if user and user.get("google_token"):
-                    # If they are verified, we check if they finished setup
-                    if user.get("root_folder_id"):
-                        update_user(sender, "status", "ACTIVE")
-                        send_message(sender, "✅ *You are ready!* Send me a file to organize.")
-                    else:
-                        # They are verified but haven't run the wizard
-                        update_user(sender, "status", "CONNECTED")
-                        send_message(sender,
-                                     "✅ *Linked Successfully!*\n\n"
-                                     "Proceed to your dashboard to setup your folders. 📂"
-                                     )
+                # A. Check if user exists in Supabase
+                if not user:
+                    send_message(sender,
+                                 "⚠️ *Account Not Found*\n\nPlease sign up at docflow.ai first, then message me.")
+                    return Response(content="User not found", status_code=200)
+
+                # B. Check if they have linked Google
+                if not user.get("google_token"):
+                    send_message(sender,
+                                 "⚠️ *Google Login Missing*\n\nPlease login on the website to link your Google Drive.")
+                    return Response(content="No Token", status_code=200)
+
+                # C. Check Setup Progress & UPDATE STATUS
+                # This update triggers the Realtime Listener in your React App!
+
+                # If they already have a root folder, they are fully ACTIVE
+                new_status = "ACTIVE" if user.get("root_folder_id") else "CONNECTED"
+
+                # Update Supabase
+                supabase.table('profiles').update({"status": new_status}).eq("phone", sender).execute()
+
+                if new_status == "ACTIVE":
+                    send_message(sender, "✅ *You are verified!* Send me a file to organize.")
                 else:
                     send_message(sender,
-                                 "⚠️ *Verification Failed* \nLogin on the website first, then type VERIFY here.")
-                return "OK"
+                                 "✅ *Linked Successfully!* \n\nCheck your computer screen—you are being redirected. 🚀")
+
+                return Response(content="Verified", status_code=200)
 
         # ============================================================
-        # 🚦 4. STATUS HANDLER
+        # 🚦 5. STATUS HANDLER
         # ============================================================
-
-        # Define frontend_url for links (Use env variable)
         frontend_url = os.getenv("FRONTEND_URL", "https://your-app.vercel.app")
 
-        # --- CASE A: NEW USER (Needs to Login) ---
-        if status == "NEW" or status == "AWAITING_LOGIN":
-            base_url = os.getenv("BACKEND_URL", "https://your-backend.onrender.com")
-            # We send them to the FRONTEND login page now, or backend?
-            # Usually better to send to frontend:
-            link = f"{frontend_url}/?phone={sender}"  # Or keep your logic if it works
-
+        # --- CASE A: NEW USER ---
+        if status == "NEW":
+            link = f"{frontend_url}/signup"
             send_message(sender,
                          "👋 *Welcome to DocOrganizer!* \n\n"
                          "Tap below to connect Google Drive & Setup Folders:\n"
                          f"{link}"
                          )
-            update_user(sender, "status", "AWAITING_LOGIN")
+            # Optional: Update status to avoid spamming welcome message
+            # supabase.table('profiles').update({"status": "AWAITING_LOGIN"}).eq("phone", sender).execute()
 
-        # --- CASE B: PENDING SETUP (Needs to finish Website Wizard) ---
+        # --- CASE B: PENDING SETUP ---
         elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
             send_message(sender,
                          "⏳ *Setup Incomplete* \n\n"

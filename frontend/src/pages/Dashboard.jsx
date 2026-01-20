@@ -2,12 +2,13 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import {
-    Terminal, Folder, Clock, Trash2, Settings, Search, Plus,
-    MoreVertical, FileText, Image as ImageIcon, FileCode, LogOut, ChevronRight,
+    Terminal, Clock, Trash2, Settings, Search, Plus,
+    MoreVertical, FileText, Image as ImageIcon, FileCode,
     Loader2, Home, BookOpen, GraduationCap, Calculator, Beaker, Globe, Code,
     LayoutGrid, List, Command
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { supabase } from "../supabaseClient"; // Import Supabase
 
 // --- THEMES & ASSETS ---
 const SUBJECT_THEMES = [
@@ -59,7 +60,6 @@ function FolderCard({ folder, onClick, unitCount, index }) {
     if (unitCount && unitCount > 0) {
         badgeText = `${unitCount} Units`;
     } else if (typeof folder.childCount === 'number' && folder.childCount > 0) {
-        // Only show item count if > 0
         badgeText = `${folder.childCount} Items`;
     }
 
@@ -145,77 +145,89 @@ export default function Dashboard() {
     const [currentFolderId, setCurrentFolderId] = useState(null);
     const [breadcrumbs, setBreadcrumbs] = useState([]);
 
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
     useEffect(() => { fetchDashboardData(); }, []);
     useEffect(() => { if (currentFolderId) fetchDriveContent(currentFolderId); }, [currentFolderId]);
 
-    const fetchDashboardData = () => {
+    // 1. UPDATED: Fetch User Data from Supabase directly
+    const fetchDashboardData = async () => {
         setLoading(true);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+                window.location.href = '/login';
+                return;
+            }
 
-        // Detect if we are on Vercel (Production) or Localhost (Development)
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+            const { data: profile, error } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .single();
 
-        // Update your axios call to use this variable
-        axios.get(`${API_URL}/api/dashboard-data`, { withCredentials: true })
-            .then(res => {
-                const data = res.data;
-                setUserData(data);
+            if (error || !profile) throw error;
 
-                if (data.subjects) {
-                    const counts = {};
-                    const addSubject = (name, units) => {
-                        if (!name) return;
-                        const cleanName = name.trim().toLowerCase();
-                        const count = Array.isArray(units) ? units.length : 0;
-                        counts[cleanName] = count;
-                        counts[name] = count;
-                    };
-                    if (Array.isArray(data.subjects)) {
-                        data.subjects.forEach(s => {
-                            if (typeof s === 'string') addSubject(s, []);
-                            else addSubject(s.name || s.subject, s.units);
-                        });
-                    } else if (typeof data.subjects === 'object') {
-                        Object.entries(data.subjects).forEach(([name, units]) => { addSubject(name, units); });
-                    }
-                    setSubjectCounts(counts);
+            setUserData(profile);
+
+            // Parse 'folder_map' from Supabase to get counts
+            if (profile.folder_map) {
+                const counts = {};
+                Object.entries(profile.folder_map).forEach(([name, data]) => {
+                    // In your new structure, data is { id: "...", units: { ... } }
+                    const unitCount = data.units ? Object.keys(data.units).length : 0;
+                    counts[name] = unitCount;
+                    counts[name.toLowerCase()] = unitCount;
+                });
+                setSubjectCounts(counts);
+            }
+
+            // Redirect logic
+            if (profile.status === "AWAITING_FOLDERS" && !profile.root_folder_id) {
+                 // Keep loading if in the middle of creation (handled by the UI you added previously)
+                 // or let it fall through to render the "Creating..." state
+            }
+            else if (!profile.root_folder_id) {
+                window.location.href = "/setup";
+            } else {
+                if (!currentFolderId) {
+                    setCurrentFolderId(profile.root_folder_id);
+                    setCurrentView('drive');
                 }
-
-                const needsSetup = data.status === "AWAITING_SYLLABUS" || !data.root_folder_id;
-                if (needsSetup) {
-                    window.location.href = "/setup";
-                } else if (data.root_folder_id) {
-                    if (!currentFolderId) {
-                        setCurrentFolderId(data.root_folder_id);
-                        setCurrentView('drive');
-                    } else {
-                        // Check if we are at root, if so, re-fetch to see new manual folders
-                        // If we are deep in a folder, we might want to stay there.
-                        // For now, let's just refresh the current folder content.
-                        fetchDriveContent(currentFolderId);
-                    }
-                }
-                setLoading(false);
-            })
-            .catch(() => window.location.href = '/login');
+            }
+        } catch (err) {
+            console.error("Dashboard Load Error:", err);
+            window.location.href = '/login';
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const fetchDriveContent = (folderId) => {
-        // Detect if we are on Vercel (Production) or Localhost (Development)
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
-        axios.get(`${API_URL}/api/drive/browse?folder_id=${folderId}`, { withCredentials: true })
-            .then(res => {
-                setFolders(res.data.folders || []);
-                setFiles(res.data.files || []);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Drive Fetch Error:", err);
-                setLoading(false);
+    // 2. UPDATED: Fetch Drive Content using Token Header
+    const fetchDriveContent = async (folderId) => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return;
+
+            const res = await axios.get(`${API_URL}/api/drive/browse?folder_id=${folderId}`, {
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`
+                }
             });
+
+            setFolders(res.data.folders || []);
+            setFiles(res.data.files || []);
+        } catch (err) {
+            console.error("Drive Fetch Error:", err);
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
-    const handleLogout = () => { window.location.href = `${API_URL}/logout`; };
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        window.location.href = "/login";
+    };
 
     const handleFolderClick = (folder) => {
         setBreadcrumbs([...breadcrumbs, { id: folder.id, name: folder.name }]);
@@ -234,6 +246,7 @@ export default function Dashboard() {
     };
 
     const getUnitCount = (folderName) => {
+        // Only show counts on the Root level
         if (breadcrumbs.length === 0 && subjectCounts) {
             if (subjectCounts[folderName]) return subjectCounts[folderName];
             const clean = folderName.trim().toLowerCase();
@@ -242,7 +255,23 @@ export default function Dashboard() {
         return undefined;
     };
 
+    // --- LOADING & "CREATING..." STATE ---
     if (loading && !userData) return <div className="h-screen bg-[#020202] flex items-center justify-center text-white"><Loader2 className="animate-spin" /></div>;
+
+    // Handle "Creating Folders" state inside Dashboard
+    if (userData?.status === 'AWAITING_FOLDERS' && !userData?.root_folder_id) {
+        return (
+            <div className="min-h-screen bg-[#020202] text-white flex flex-col items-center justify-center font-mono">
+                <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-6" />
+                <h2 className="text-2xl font-bold mb-2">Creating your Workspace...</h2>
+                <p className="text-white/50 max-w-md text-center">
+                    The AI is currently building your folder structure on Google Drive.
+                    This usually takes about 10-20 seconds.
+                </p>
+                {setTimeout(() => window.location.reload(), 5000) && ""}
+            </div>
+        );
+    }
 
     return (
         <div className="flex h-screen bg-[#050505] text-white font-sans overflow-hidden selection:bg-white/20">

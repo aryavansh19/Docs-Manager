@@ -1,29 +1,53 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Phone, Terminal, ArrowRight, UserPlus, ShieldCheck, ArrowLeft } from "lucide-react";
+import { Phone, ArrowRight, ShieldCheck, ArrowLeft } from "lucide-react"; // Removed Terminal
 import { Link } from "react-router-dom";
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+import { supabase } from "../supabaseClient"; // Import Supabase
 
 export default function Signup() {
     const [phone, setPhone] = useState("");
     const [isLoading, setIsLoading] = useState(false);
 
-    const handleSignup = () => {
+    const handleSignup = async () => {
         if (!phone || phone.length < 10) {
             alert("Please enter a valid WhatsApp number.");
             return;
         }
 
         setIsLoading(true);
-        // DOOR A: Redirect browser to Python Backend with the phone number
-        window.location.href = `${API_URL}/login?phone=${phone}`;
+
+        try {
+            // 1. Construct the Callback URL with the Phone Number
+            // This ensures we know who this user is when they return from Google
+            const baseUrl = window.location.origin;
+            const redirectUrl = `${baseUrl}/auth/callback?phone=${encodeURIComponent(phone)}`;
+
+            // 2. Trigger Supabase OAuth
+            const { error } = await supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: redirectUrl,
+                    queryParams: {
+                        access_type: 'offline', // Forces Google to give us a Refresh Token
+                        prompt: 'consent',
+                    },
+                    scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email'
+                },
+            });
+
+            if (error) throw error;
+
+        } catch (error) {
+            console.error("Signup Error:", error);
+            alert("Error connecting to Google: " + error.message);
+            setIsLoading(false);
+        }
     };
 
     return (
         <div className="min-h-screen bg-[#020202] text-white font-mono flex flex-col items-center justify-center relative overflow-hidden">
 
-            {/* Background Effects */}
+            {/* Background Effects (Kept exactly as is) */}
             <div className="absolute inset-0 z-0 pointer-events-none opacity-30"
                 style={{
                     backgroundImage: 'radial-gradient(circle, #333 1px, transparent 1px)',
@@ -31,8 +55,6 @@ export default function Signup() {
                 }}
             />
             <div className="absolute inset-0 bg-gradient-to-b from-purple-900/10 via-transparent to-blue-900/10 z-0 pointer-events-none" />
-
-            {/* Animated Glow */}
             <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-600/20 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
             <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
 
@@ -52,7 +74,6 @@ export default function Signup() {
             >
                 <div className="bg-[#0a0a0a]/80 border border-white/10 rounded-2xl p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden group">
 
-                    {/* Top Accent Line */}
                     <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 via-blue-500 to-purple-500 opacity-50 group-hover:opacity-100 transition-opacity" />
 
                     <div className="mb-8">
@@ -95,7 +116,7 @@ export default function Signup() {
                     {/* Action Button */}
                     <button
                         onClick={handleSignup}
-                        disabled={!phone}
+                        disabled={!phone || isLoading}
                         className={`w-full py-4 font-bold rounded-xl flex items-center justify-center gap-3 transition-all relative overflow-hidden group/btn ${phone
                             ? "bg-white hover:bg-gray-200 text-black cursor-pointer shadow-[0_0_20px_rgba(255,255,255,0.1)]"
                             : "bg-white/5 text-white/20 cursor-not-allowed border border-white/5"
@@ -112,7 +133,6 @@ export default function Signup() {
                         )}
                     </button>
 
-                    {/* Footer Toggle */}
                     <div className="mt-6 text-center pt-6 border-t border-white/5">
                         <p className="text-xs text-white/40">
                             Already have an account?{" "}

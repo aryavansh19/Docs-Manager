@@ -1,56 +1,93 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
-import { Smartphone, CheckCircle2, Loader2, ArrowRight, Shield, Terminal } from 'lucide-react';
+import { Smartphone, CheckCircle2, Loader2, ArrowRight, Shield, Terminal, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { supabase } from '../supabaseClient';
 
-// Use the environment variable for the URL
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
-
-const Verification = () => {
+const Verify = () => {
     const navigate = useNavigate();
     const [phone, setPhone] = useState("...");
     const [isVerified, setIsVerified] = useState(false);
+    const [isChecking, setIsChecking] = useState(false); // New state for manual check
+
+    // Function to check status manually
+    const checkStatus = async () => {
+        setIsChecking(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('status')
+            .eq('id', user.id)
+            .single();
+
+        console.log("Manual Check Status:", profile?.status);
+
+        if (profile && ["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE", "EDITING_LIST"].includes(profile.status)) {
+            handleSuccess(profile.status);
+        } else {
+            // Optional: You could show a small toast here saying "Not verified yet"
+            setTimeout(() => setIsChecking(false), 1000); // Reset button after 1s
+        }
+    };
+
+    const handleSuccess = (status) => {
+        setIsVerified(true);
+        setTimeout(() => {
+            if (status === "ACTIVE") {
+                navigate('/dashboard');
+            } else {
+                navigate('/setup');
+            }
+        }, 1500);
+    };
 
     useEffect(() => {
-        const fetchStatus = () => {
-            // 👇 FIX IS HERE: Changed single quotes ' ' to backticks ` `
-            axios.get(`${API_URL}/api/dashboard-data`, { withCredentials: true })
-                .then(res => {
-                    // Update phone if available
-                    if (res.data.phone) setPhone(res.data.phone);
+        let channel;
 
-                    const status = res.data.status;
-                    console.log("Current Status:", status); // Debug log
+        const setupVerification = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) { navigate('/login'); return; }
 
-                    // Check if status means they are verified
-                    if (["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE", "EDITING_LIST"].includes(status)) {
-                        setIsVerified(true);
+            // 1. Initial Fetch
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('phone, status')
+                .eq('id', user.id)
+                .single();
 
-                        // Wait 1.5s for animation, then redirect
-                        setTimeout(() => {
-                            if (status === "ACTIVE") {
-                                navigate('/dashboard');
-                            } else {
-                                navigate('/setup');
-                            }
-                        }, 1500);
+            if (profile) {
+                setPhone(profile.phone);
+                if (["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE", "EDITING_LIST"].includes(profile.status)) {
+                    handleSuccess(profile.status);
+                }
+            }
+
+            // 2. Realtime Listener
+            channel = supabase
+                .channel('public:profiles')
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'profiles',
+                        filter: `id=eq.${user.id}`
+                    },
+                    (payload) => {
+                        console.log("⚡ Realtime Update Received:", payload.new.status);
+                        if (["CONNECTED", "AWAITING_SYLLABUS", "ACTIVE", "EDITING_LIST"].includes(payload.new.status)) {
+                            handleSuccess(payload.new.status);
+                        }
                     }
-                })
-                .catch((err) => console.error("Waiting for verification...", err));
+                )
+                .subscribe();
         };
 
-        // 1. Initial Check
-        fetchStatus();
-
-        // 2. Poll every 2 seconds
-        const interval = setInterval(() => {
-            // Only keep checking if we aren't verified yet
-            if (!isVerified) fetchStatus();
-        }, 2000);
-
-        return () => clearInterval(interval);
-    }, [isVerified, navigate]); // Added navigate to dependency array
+        setupVerification();
+        return () => { if (channel) supabase.removeChannel(channel); };
+    }, [navigate]);
 
     return (
         <div className="min-h-screen bg-[#020202] text-white font-mono flex flex-col items-center justify-center relative overflow-hidden">
@@ -107,7 +144,7 @@ const Verification = () => {
                     </div>
 
                     {!isVerified && (
-                        <div className="space-y-6">
+                        <div className="space-y-4"> {/* Changed space-y-6 to space-y-4 for tighter layout */}
                             {/* Instruction Box */}
                             <div className="bg-white/5 border border-white/10 p-4 rounded-xl flex items-start gap-4 transition-all hover:bg-white/[0.07]">
                                 <div className="p-2 bg-yellow-500/10 rounded-lg text-yellow-500 shrink-0">
@@ -121,7 +158,7 @@ const Verification = () => {
                                 </div>
                             </div>
 
-                            {/* Action Button */}
+                            {/* Action Button: WhatsApp */}
                             <div className="relative group/btn">
                                 <a
                                     href={`https://wa.me/${import.meta.env.VITE_BOT_NUMBER}?text=VERIFY`}
@@ -135,13 +172,27 @@ const Verification = () => {
                                 </a>
                             </div>
 
+                            {/* 👇 NEW: Manual Check Button 👇 */}
+                            <button
+                                onClick={checkStatus}
+                                disabled={isChecking}
+                                className="w-full py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 font-bold rounded-xl flex items-center justify-center gap-3 transition-all hover:text-white"
+                            >
+                                {isChecking ? (
+                                    <Loader2 size={18} className="animate-spin text-blue-500" />
+                                ) : (
+                                    <RefreshCw size={18} />
+                                )}
+                                <span>{isChecking ? "Checking..." : "I have sent the message"}</span>
+                            </button>
+
                             {/* Status Indicator */}
                             <div className="flex items-center justify-center gap-3 text-xs text-white/30 pt-2">
                                 <div className="relative flex h-2 w-2">
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                                 </div>
-                                <span className="font-mono tracking-wide">LISTENING FOR "VERIFY"...</span>
+                                <span className="font-mono tracking-wide">LISTENING FOR UPDATES...</span>
                             </div>
                         </div>
                     )}
@@ -164,4 +215,4 @@ const Verification = () => {
     );
 };
 
-export default Verification;
+export default Verify;
