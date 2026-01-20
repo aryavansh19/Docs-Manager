@@ -1,41 +1,31 @@
-import json
-import os
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from database import get_user
-from dotenv import load_dotenv
+import os
 
-load_dotenv() # Make sure we can read .env
 
-def authenticate_drive(phone_number):
+def get_drive_service(refresh_token):
     """
-    Authenticates using the token stored in the SQLite database for a specific user.
+    Reconstructs the Google Drive Service object using the Refresh Token.
+    This allows us to act on behalf of the user without them logging in again.
     """
-    print(f"🔐 Authenticating User: {phone_number}")
 
-    # 1. Get User Data
-    user = get_user(phone_number)
-    token_data = user.get("google_token")
+    # 1. Get App Credentials from Environment
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
 
-    if not token_data:
-        raise ValueError(f"❌ No Google Token found for user {phone_number}. Please login first.")
+    if not client_id or not client_secret:
+        raise Exception("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET in .env")
 
-    # --- THE FIX: Handle String vs Dictionary ---
-    # If the database returned a String, convert it to a Dictionary
-    if isinstance(token_data, str):
-        try:
-            token_data = json.loads(token_data)
-        except json.JSONDecodeError:
-            raise ValueError("❌ Database Error: Stored token is not valid JSON.")
-    # ---------------------------------------------
-
-    # 2. Reconstruct Credentials object
+    # 2. Build Credentials Object
+    # We pass 'None' for the access token because the refresh token will fetch a new one automatically.
     creds = Credentials(
-        token=token_data.get("access_token"),
-        refresh_token=token_data.get("refresh_token"),
+        None,  # Access token (will be refreshed)
+        refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.getenv("GOOGLE_CLIENT_ID"),
-        client_secret=os.getenv("GOOGLE_CLIENT_SECRET")
+        client_id=client_id,
+        client_secret=client_secret
     )
 
-    return build('drive', 'v3', credentials=creds)
+    # 3. Build and Return Service
+    service = build('drive', 'v3', credentials=creds)
+    return service

@@ -1,4 +1,5 @@
 import os
+import io
 import time
 import requests
 import json
@@ -6,12 +7,9 @@ from fastapi import FastAPI, Request, BackgroundTasks, Response
 from dotenv import load_dotenv
 
 # --- IMPORTS FROM OUR NEW MODULES ---
-from database import get_user, update_user, get_user_by_email
-from syllabus_parser import parse_syllabus_with_gemini
-from test_sorting import ask_gemini_to_sort, upload_to_drive, authenticate_drive
-from drive_search import search_drive_files
-from test_sorting import parse_search_intent # Or wherever you pasted the function above
 
+
+from test_sorting import analyze_document, upload_and_index
 from folder_creator import build_drive_structure, append_folders_to_drive
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -28,18 +26,10 @@ from google.oauth2.credentials import Credentials
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from supabase import create_client, Client
 from typing import List, Dict, Any
-
+from supabase_client import supabase
 
 
 load_dotenv()
-
-# --- 1. SETUP SUPABASE CONNECTION ---
-# Make sure these are in your .env file!
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Use Service Role Key for backend
-
-# Initialize Client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
@@ -63,12 +53,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # --- CONFIG ---
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+META_TOKEN = os.getenv("META_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+if not META_TOKEN or not PHONE_NUMBER_ID:
     raise ValueError("❌ Missing Keys! Check your .env file.")
 
 # --- MEMORY FOR BUTTONS ---
@@ -86,7 +76,7 @@ class SetupRequest(BaseModel):
 def send_message(to, text):
     url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
     headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Authorization": f"Bearer {META_TOKEN}",
         "Content-Type": "application/json"
     }
     requests.post(url, headers=headers, json={
@@ -104,7 +94,7 @@ def send_buttons(to, text, buttons):
     """
     url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
     headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Authorization": f"Bearer {META_TOKEN}",
         "Content-Type": "application/json"
     }
     button_actions = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"]}} for b in buttons]
@@ -122,60 +112,7 @@ def send_buttons(to, text, buttons):
     requests.post(url, headers=headers, json=data)
 
 
-# --- HELPER: Download Media ---
-def download_media(media_id, filename):
-    try:
-        url_info = f"https://graph.facebook.com/v17.0/{media_id}"
-        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-        r = requests.get(url_info, headers=headers)
-        media_url = r.json().get('url')
 
-        r_media = requests.get(media_url, headers=headers)
-        if r_media.status_code == 200:
-            with open(filename, 'wb') as f:
-                f.write(r_media.content)
-            return True
-    except:
-        return False
-
-#
-# @app.post("/api/complete-setup")
-# async def complete_setup(data: SetupRequest):
-#     print(f"🚀 Starting Setup for {data.phone} with subjects: {data.subjects}")
-#
-#     # A. Validate User
-#     user = get_user(data.phone)
-#     if not user:
-#         return JSONResponse({"error": "User not found"}, status_code=404)
-#
-#     # B. Prepare the Folder Structure
-#     # We turn the list ["Physics"] into {"Physics": ["Unit 1", "Unit 2"...]}
-#     # This is what your Drive function expects.
-#     final_syllabus = {
-#         subj: ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"]
-#         for subj in data.subjects
-#     }
-#
-#     # C. Create Folders in Google Drive
-#     try:
-#         # NOTE: This function (build_drive_structure) must exist in your code.
-#         # It connects to Google Drive and makes the folders.
-#         root_id, new_map = build_drive_structure(data.phone, final_syllabus)
-#
-#         # D. Update Database
-#         update_user(data.phone, "folder_map", new_map)
-#         update_user(data.phone, "root_folder_id", root_id)
-#         update_user(data.phone, "status", "ACTIVE")  # <--- Important! This unlocks the dashboard.
-#
-#         return {"status": "success"}
-#
-#     except Exception as e:
-#         print(f"❌ Setup Error: {e}")
-#         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
-#
-#
-
-# Add to main.py
 @app.get("/")
 async def health_check():
     return {"status": "online", "message": "Python Backend is runnning!"}
@@ -402,330 +339,215 @@ async def create_folders_web(request: Request, background_tasks: BackgroundTasks
         traceback.print_exc()
         return Response(f"Internal Error: {str(e)}", 500)
 
-@app.post("/upload-syllabus")
-async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
-    phone = request.session.get("user_phone")
-    if not phone: return JSONResponse({"error": "Not logged in"}, status_code=401)
-
-    # 1. Save file locally
-    temp_filename = f"syllabus_{phone}.pdf"
-    with open(temp_filename, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # 2. Parse (Assuming returns dict: {"Maths": [...], "Physics": [...]})
-    subjects_data = parse_syllabus_with_gemini(temp_filename)
-
-    # 3. Save to DB
-    update_user(phone, "temp_syllabus_list", subjects_data)
-    update_user(phone, "status", "EDITING_LIST")
-
-    # ✅ CORRECT: Send the full dictionary (Subjects + Units)
-    return JSONResponse(content={"subjects": subjects_data})
-
-
-
-# ==========================================
-# 🤖 LOGIC 3: SORTING FILES (Active Mode)
-# ==========================================
-def process_file_background(media_id, sender, temp_filename):
-    print(f"🔄 Processing file for {sender}...")
-
-    if download_media(media_id, temp_filename):
-        try:
-            # 1. LOAD USER MAP
-            user = get_user(sender)
-            my_folders = user.get("folder_map", {})
-            if isinstance(my_folders, str):
-                try:
-                    my_folders = json.loads(my_folders)
-                except:
-                    my_folders = {}
-
-            if not my_folders:
-                send_message(sender, "⚠️ No folders set up. Please go to the dashboard.")
-                return
-
-            # 2. ASK GEMINI TO SORT
-            decision = ask_gemini_to_sort(temp_filename, my_folders)
-
-            subj = decision.get('subject')
-            unit = decision.get('unit')
-            new_name = decision.get('suggested_filename', temp_filename)
-
-            target_folder_id = None
-            save_location_name = ""
-
-            # 3. DETERMINE TARGET FOLDER (Auto-Sort Logic)
-
-            # Case A: Exact Match (Subject + Unit found)
-            if subj in my_folders and unit in my_folders[subj].get('units', {}):
-                target_folder_id = my_folders[subj]['units'][unit]
-                save_location_name = f"{subj} > {unit}"
-
-            # Case B: Subject Match Only (Unit unknown/missing) -> Save to Subject Root
-            elif subj in my_folders:
-                target_folder_id = my_folders[subj]['id']
-                save_location_name = f"{subj} (Root)"
-
-            # Case C: Fallback / Utility Folders
-            elif subj in ["Important Documents", "Screenshots", "Identity Cards", "Personal"]:
-                # Check if these exist in the user's map (they should, from setup)
-                if subj in my_folders:
-                    target_folder_id = my_folders[subj]  # Might be string ID or dict depending on setup
-                    if isinstance(target_folder_id, dict): target_folder_id = target_folder_id.get('id')
-                    save_location_name = subj
-
-            # Case D: No idea -> 'Imported Documents'
-            if not target_folder_id:
-                if "Imported Documents" in my_folders:
-                    target = my_folders["Imported Documents"]
-                    target_folder_id = target.get('id') if isinstance(target, dict) else target
-                    save_location_name = "Imported Documents"
-                else:
-                    # Last resort: Root Folder
-                    target_folder_id = user.get("root_folder_id")
-                    save_location_name = "Home Folder"
-
-            # 4. EXECUTE SAVE (No Buttons!)
-            if target_folder_id:
-                # Authenticate Drive
-                drive_service = authenticate_drive(sender)
-
-                # Upload
-                upload_to_drive(drive_service, temp_filename, new_name, target_folder_id)
-
-                # Notify User
-                send_message(sender, f"✅ **Auto-Saved!**\n📂 *{save_location_name}*\n📄 _{new_name}_")
-            else:
-                send_message(sender, "❌ Error: Could not determine where to save this file.")
-
-        except Exception as e:
-            print(f"❌ Auto-Save Error: {e}")
-            import traceback
-            traceback.print_exc()
-            send_message(sender, "❌ Failed to save file.")
-
-        finally:
-            # Cleanup temp file
-            if os.path.exists(temp_filename):
-                os.remove(temp_filename)
-    else:
-        send_message(sender, "❌ Failed to download file from WhatsApp.")
+# @app.post("/upload-syllabus")
+# async def upload_syllabus_web(request: Request, file: UploadFile = File(...)):
+#     phone = request.session.get("user_phone")
+#     if not phone: return JSONResponse({"error": "Not logged in"}, status_code=401)
+#
+#     # 1. Save file locally
+#     temp_filename = f"syllabus_{phone}.pdf"
+#     with open(temp_filename, "wb") as buffer:
+#         shutil.copyfileobj(file.file, buffer)
+#
+#     # 2. Parse (Assuming returns dict: {"Maths": [...], "Physics": [...]})
+#     subjects_data = parse_syllabus_with_gemini(temp_filename)
+#
+#     # 3. Save to DB
+#     update_user(phone, "temp_syllabus_list", subjects_data)
+#     update_user(phone, "status", "EDITING_LIST")
+#
+#     # ✅ CORRECT: Send the full dictionary (Subjects + Units)
+#     return JSONResponse(content={"subjects": subjects_data})
 
 
 
+# --- HELPER: DOWNLOAD MEDIA FROM META ---
+def get_meta_media(media_id):
+    # 1. Get the URL
+    url_info = f"https://graph.facebook.com/v17.0/{media_id}"
+    headers = {"Authorization": f"Bearer {META_TOKEN}"}
 
-# ==========================================
-# 👂 WEBHOOK LISTENER
-# ==========================================
+    resp_info = requests.get(url_info, headers=headers).json()
+    media_url = resp_info.get('url')
+    mime_type = resp_info.get('mime_type')
+
+    if not media_url: return None, None
+
+    # 2. Download binary data
+    resp_data = requests.get(media_url, headers=headers)
+    return io.BytesIO(resp_data.content), mime_type
+
+
+# --- BACKGROUND TASK: PROCESS FILE ---
+async def process_file_background(media_id, sender, filename):
+    print(f"🔄 Processing file {filename} for {sender}...")
+
+    # 1. Download from Meta
+    file_bytes, mime_type = get_meta_media(media_id)
+    if not file_bytes:
+        send_message(sender, "❌ Failed to download file from WhatsApp servers.")
+        return
+
+    # 2. Fetch User & Folder Map
+    user_res = supabase.table('profiles').select("*").eq("phone", sender).single().execute()
+    user = user_res.data
+
+    # 3. Analyze (Using the Gemini function we wrote earlier)
+    # Ensure you have 'analyze_document' and 'upload_and_index' imported/defined!
+    folder_map = user.get('folder_map', {})
+    subject_list = list(folder_map.keys())
+
+    analysis = analyze_document(file_bytes, mime_type, subject_list)
+
+    # 4. Upload
+    saved_subject = upload_and_index(
+        user_id=user['id'],
+        google_token=user['google_token']['refresh_token'],
+        file_obj=file_bytes,
+        mime_type=mime_type,
+        filename=filename,
+        analysis=analysis,
+        folder_map=folder_map,
+        root_id=user['root_folder_id']
+    )
+
+    send_message(sender, f"✅ Saved to *{saved_subject}* folder!\nTags: {', '.join(analysis['tags'])}")
+
+
 @app.post("/webhook")
 async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
     try:
         data = await request.json()
 
         # ---------------------------------------------------------
-        # 🛡️ 1. SAFETY CHECKS (Standard Meta Boilerplate)
+        # 🛡️ 1. SAFETY CHECKS
         # ---------------------------------------------------------
-        if not data.get('entry') or not data['entry'][0].get('changes'):
-            return Response(content="No valid entry", status_code=200)
+        entry = data.get('entry', [])
+        if not entry or not entry[0].get('changes'):
+            return Response(content="No Data", status_code=200)
 
-        value = data['entry'][0]['changes'][0].get('value')
+        value = entry[0]['changes'][0].get('value')
 
-        # Ignore status updates (read receipts, etc.)
+        # Ignore status updates (read receipts)
         if not value or 'messages' not in value:
-            return Response(content="Status update ignored", status_code=200)
+            return Response(content="Ignored", status_code=200)
 
         # ---------------------------------------------------------
         # 📩 2. EXTRACT MESSAGE INFO
         # ---------------------------------------------------------
         msg = value['messages'][0]
-        sender = msg['from']  # The phone number
+        sender = msg['from']  # Meta sends '919876543210' (no +)
         msg_type = msg['type']
 
         # ---------------------------------------------------------
-        # 🔍 3. SUPABASE LOOKUP (Replacing get_user)
+        # 🔍 3. SUPABASE LOOKUP
         # ---------------------------------------------------------
         user = {}
         status = "NEW"
 
-        # Query the 'profiles' table for this phone number
         try:
+            # We assume your DB stores phones like '919876543210' or '+91...'
+            # Meta sends clean numbers usually. You might need to add/remove '+' depending on your DB.
             response = supabase.table('profiles').select("*").eq("phone", sender).execute()
-            if response.data and len(response.data) > 0:
-                user = response.data[0]  # Get the first result
+            if response.data:
+                user = response.data[0]
                 status = user.get('status', 'NEW')
         except Exception as e:
             print(f"⚠️ DB Error: {e}")
 
         # ============================================================
-        # 🚀 4. VERIFICATION INTERCEPTOR (The Fix)
+        # 🚀 4. VERIFICATION INTERCEPTOR (Your Logic)
         # ============================================================
         if msg_type == 'text':
             text_body = msg.get('text', {}).get('body', '').strip().upper()
 
             if text_body == "VERIFY":
-                # A. Check if user exists in Supabase
                 if not user:
-                    send_message(sender,
-                                 "⚠️ *Account Not Found*\n\nPlease sign up at docflow.ai first, then message me.")
-                    return Response(content="User not found", status_code=200)
+                    send_message(sender, "⚠️ *Account Not Found*\nPlease sign up at docflow.ai first.")
+                    return Response(content="User Not Found", status_code=200)
 
-                # B. Check if they have linked Google
                 if not user.get("google_token"):
-                    send_message(sender,
-                                 "⚠️ *Google Login Missing*\n\nPlease login on the website to link your Google Drive.")
+                    send_message(sender, "⚠️ *Google Login Missing*\nPlease login on the website first.")
                     return Response(content="No Token", status_code=200)
 
-                # C. Check Setup Progress & UPDATE STATUS
-                # This update triggers the Realtime Listener in your React App!
-
-                # If they already have a root folder, they are fully ACTIVE
+                # Determine new status
                 new_status = "ACTIVE" if user.get("root_folder_id") else "CONNECTED"
 
-                # Update Supabase
+                # Update DB
                 supabase.table('profiles').update({"status": new_status}).eq("phone", sender).execute()
 
                 if new_status == "ACTIVE":
-                    send_message(sender, "✅ *You are verified!* Send me a file to organize.")
+                    send_message(sender, "✅ *Verified!* Send me a file to organize.")
                 else:
-                    send_message(sender,
-                                 "✅ *Linked Successfully!* \n\nCheck your computer screen—you are being redirected. 🚀")
+                    send_message(sender, "✅ *Linked!* Check your dashboard to finish setup.")
 
                 return Response(content="Verified", status_code=200)
 
         # ============================================================
         # 🚦 5. STATUS HANDLER
         # ============================================================
-        frontend_url = os.getenv("FRONTEND_URL", "https://your-app.vercel.app")
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")  # Update for Prod
 
         # --- CASE A: NEW USER ---
         if status == "NEW":
-            link = f"{frontend_url}/signup"
-            send_message(sender,
-                         "👋 *Welcome to DocOrganizer!* \n\n"
-                         "Tap below to connect Google Drive & Setup Folders:\n"
-                         f"{link}"
-                         )
-            # Optional: Update status to avoid spamming welcome message
-            # supabase.table('profiles').update({"status": "AWAITING_LOGIN"}).eq("phone", sender).execute()
+            send_message(sender, f"👋 *Welcome!* \nTap below to setup:\n{frontend_url}/signup")
 
         # --- CASE B: PENDING SETUP ---
         elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
-            send_message(sender,
-                         "⏳ *Setup Incomplete* \n\n"
-                         "Please finish setting up your subjects on the dashboard:\n"
-                         f"👉 {frontend_url}/setup"
-                         )
+            send_message(sender, f"⏳ *Almost done!* \nFinish setup here:\n{frontend_url}/setup")
 
-        # --- CASE C: ACTIVE USER (The Main Bot) ---
+        # --- CASE C: ACTIVE USER ---
         elif status == "ACTIVE":
 
-            # 1. TEXT MESSAGE -> SEARCH INTENT
+            # 1. TEXT MESSAGE -> SEARCH
             if msg_type == 'text':
                 text_body = msg.get('text', {}).get('body', '')
 
-                # A. Load Folder Map safely
-                my_folders = user.get("folder_map", {})
-                if isinstance(my_folders, str):
-                    try:
-                        my_folders = json.loads(my_folders)
-                    except:
-                        my_folders = {}
-
-                # B. Check Intent
-                intent = parse_search_intent(text_body, my_folders)
-                is_search = intent.get("is_search")
-                subject_match = intent.get("subject")
-
-                if is_search:
-                    send_message(sender, f"🔍 Searching for '{text_body}'...")
-
-                    # C. Determine Folder ID
-                    parent_id = None
-                    if subject_match and subject_match in my_folders:
-                        parent_id = my_folders[subject_match]['id']
-
-                    # D. Call Search
-                    files_found = search_drive_files(sender, text_body, parent_id)
-
-                    if not files_found:
-                        send_message(sender, "❌ No files found.")
-                    else:
-                        # E. Format Results
-                        response_msg = f"📂 **Found {len(files_found)} files:**\n\n"
-                        for f in files_found[:5]:
-                            icon = "📄"
-                            if "image" in f['mimeType']:
-                                icon = "🖼️"
-                            elif "pdf" in f['mimeType']:
-                                icon = "📕"
-                            elif "folder" in f['mimeType']:
-                                icon = "📁"
-
-                            response_msg += f"{icon} *{f['name']}*\n🔗 {f['webViewLink']}\n\n"
-
-                        send_message(sender, response_msg)
-
+                # Check for "Search" intent in text
+                if "find" in text_body.lower() or "search" in text_body.lower() or "get" in text_body.lower():
+                    # (Assuming you have a search_drive_files helper)
+                    # files = search_drive_files(sender, text_body)
+                    # For now, just a placeholder:
+                    send_message(sender, "🔍 Search feature coming next! Use Supabase search here.")
                 else:
-                    send_message(sender, "📤 Send me a file to save, or ask 'Find Adhar Card'.")
+                    send_message(sender, "📤 Send me a file to save.")
 
-            # 2. FILE MESSAGE -> SORTING INTENT
+            # 2. FILE MESSAGE -> SORTING
             elif msg_type in ['document', 'image']:
-                # Ensure the media key exists before accessing
-                if msg_type in msg:
-                    media_id = msg[msg_type]['id']
+                media_id = None
+                filename = f"upload_{sender}"
 
-                    # Determine extension
-                    ext = ".jpg"
-                    if msg_type == 'document':
-                        mime = msg['document'].get('mime_type', '')
-                        if "pdf" in mime:
-                            ext = ".pdf"
-                        elif "word" in mime:
-                            ext = ".docx"
+                if msg_type == 'document':
+                    media_id = msg['document']['id']
+                    filename = msg['document'].get('filename', f"doc_{sender}.pdf")
+                elif msg_type == 'image':
+                    media_id = msg['image']['id']
+                    filename = f"img_{sender}.jpg"
 
-                    temp_filename = f"file_{sender}{ext}"
-
+                if media_id:
                     send_message(sender, "🤖 Analyzing document...")
-                    background_tasks.add_task(process_file_background, media_id, sender, temp_filename)
-
-            # 3. BUTTON CLICKS
-            elif msg_type == 'interactive':
-                btn_id = msg['interactive']['button_reply']['id']
-
-                if sender in pending_actions:
-                    action = pending_actions[sender]
-
-                    if btn_id == "save_file":
-                        send_message(sender, "🚀 Uploading to Drive...")
-                        try:
-                            drive_service = authenticate_drive(sender)
-                            upload_to_drive(drive_service, action['local_path'], action['new_name'],
-                                            action['drive_folder_id'])
-                            send_message(sender, f"✅ Saved to *{action['subject']}*")
-                        except Exception as e:
-                            send_message(sender, f"❌ Upload failed: {e}")
-
-                        if os.path.exists(action['local_path']): os.remove(action['local_path'])
-                        del pending_actions[sender]
-
-                    elif btn_id == "discard_file":
-                        send_message(sender, "🚫 Discarded.")
-                        if os.path.exists(action['local_path']): os.remove(action['local_path'])
-                        del pending_actions[sender]
+                    background_tasks.add_task(process_file_background, media_id, sender, filename)
 
     except Exception as e:
         print(f"❌ Webhook Error: {e}")
-        # Return 200 OK so Meta doesn't keep retrying the broken message
-        return Response(content="Internal Error", status_code=200)
+        import traceback
+        traceback.print_exc()
 
     return Response(content="OK", status_code=200)
 
 
 
+
+
 # --- VERIFY WEBHOOK ---
 @app.get("/webhook")
-async def verify(request: Request):
-    if request.query_params.get("hub.verify_token") == VERIFY_TOKEN:
-        return int(request.query_params.get("hub.challenge"))
-    return Response("Forbidden", 403)
+async def verify_webhook(request: Request):
+    # This verifies your URL with Meta
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return Response(content=challenge, status_code=200)
+
+    return Response(content="Forbidden", status_code=403)
