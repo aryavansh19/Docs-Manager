@@ -277,7 +277,6 @@ async def browse_drive(request: Request, folder_id: str):
                 files.append(clean_item)
 
         return {"folders": folders, "files": files}
-
     except Exception as e:
         print(f"❌ Browse Error: {str(e)}")
         return Response(f"Error: {str(e)}", 500)
