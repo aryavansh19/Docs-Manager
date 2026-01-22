@@ -33,6 +33,7 @@ def analyze_document(file_bytes, mime_type, full_folder_map):
         units = list(data.get('units', {}).keys())
         structure_for_ai[subject] = units
 
+    print(structure_for_ai)
     # 2. The Deep-Filing Prompt
     prompt = f"""
     Analyze this document. Your goal is to file it into the specific 'Unit' folder if possible.
@@ -61,6 +62,7 @@ def analyze_document(file_bytes, mime_type, full_folder_map):
         prompt
     ])
 
+    print(response.text)
     try:
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
@@ -68,38 +70,39 @@ def analyze_document(file_bytes, mime_type, full_folder_map):
         return {"subject": "Imported Documents", "unit": None, "tags": [], "filename": "Scanned_Doc"}
 
 
-# --- HELPER 3: UPLOAD TO DRIVE & DB (DEEP ROUTING) ---
+# --- HELPER 3: UPLOAD TO DRIVE & DB (TRUTHFUL VERSION) ---
 def upload_and_index(user_id, google_token, file_obj, mime_type, original_filename, analysis, folder_map, root_id):
     # 1. Parse Gemini Analysis
     subject = analysis.get('subject', 'Imported Documents')
-    unit_name = analysis.get('unit')  # This might be None
+    unit_name = analysis.get('unit')
 
     target_folder_id = None
-    final_folder_name = subject  # For logging
+    final_folder_name = subject  # Default to what AI said
 
-    # 2. ROUTING LOGIC (The Deep Dive)
+    # 2. ROUTING LOGIC
     subject_data = folder_map.get(subject)
 
     if subject_data:
-        # Step A: Check if Gemini found a valid Unit
+        # Case A: Subject Exists
         if unit_name and 'units' in subject_data:
-            # Try to find the specific Unit's ID
             unit_id = subject_data['units'].get(unit_name)
             if unit_id:
                 target_folder_id = unit_id
                 final_folder_name = f"{subject}/{unit_name}"
             else:
-                # Fallback: Unit name didn't match perfectly, go to Subject
                 target_folder_id = subject_data['id']
+                final_folder_name = subject
         else:
-            # Step B: No unit found, go to Subject Folder
             target_folder_id = subject_data['id']
+            final_folder_name = subject
     else:
-        # Step C: Subject not found, go to Root
+        # 🟢 Case B: Subject NOT Found (The Fix)
+        # If AI invented a folder like "Business Card", we force it to Unsorted
         target_folder_id = root_id
         subject = "Unsorted"
+        final_folder_name = "Unsorted"  # <--- This ensures the user is told the truth
 
-    # 3. SMART RENAMING (Keep your existing logic)
+    # 3. SMART RENAMING
     ai_name = analysis.get('filename')
     _, ext = os.path.splitext(original_filename)
     if not ext: ext = ".pdf" if "pdf" in mime_type else ".jpg"
@@ -122,14 +125,10 @@ def upload_and_index(user_id, google_token, file_obj, mime_type, original_filena
     drive_file_id = drive_file.get('id')
 
     # 5. SAVE TO SUPABASE
+    # Construct Tags
     base_tags = analysis.get('tags', [])
-
-    # Force add hierarchical tags so "Full Stack" search finds this file
     structural_tags = [subject]
-    if unit_name:
-        structural_tags.append(unit_name)
-
-    # Combine and remove duplicates
+    if unit_name: structural_tags.append(unit_name)
     final_tags = list(set(base_tags + structural_tags))
 
     supabase.table('files').insert({
@@ -137,8 +136,8 @@ def upload_and_index(user_id, google_token, file_obj, mime_type, original_filena
         "file_name": final_filename,
         "drive_file_id": drive_file_id,
         "folder_id": target_folder_id,
-        "subject": subject,
-        "tags": final_tags  # <--- UPDATED THIS LINE
+        "subject": subject,  # Stores "Unsorted" correctly
+        "tags": final_tags
     }).execute()
 
-    return final_folder_name
+    return final_folder_name  # Returns "Unsorted" so the bot says "Saved in Unsorted"
