@@ -10,6 +10,8 @@ import Signup from "./pages/Signup";
 import CreateSubject from "./pages/CreateSubject.jsx";
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from "./components/ProtectedRoute";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
+import TermsOfService from "./pages/TermsOfService";
 
 function App() {
   return (
@@ -27,6 +29,8 @@ function App() {
           <Route path="/verify" element={<Verification />} />
           <Route path="/setup" element={<SetupScreen />} />
         </Route>
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="*" element={<Home />} />
       </Routes>

@@ -50,19 +50,37 @@ const FloatingIcon = ({ icon: Icon, className, delay = 0 }) => (
 );
 
 // --- FAQ ITEM ---
-const FAQItem = ({ question, isOpen, onClick }) => (
-    <motion.button
-        onClick={onClick}
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        className="w-full flex items-center justify-between p-6 bg-gradient-to-br from-white/5 to-white/[0.02] hover:from-white/10 hover:to-white/5 border border-white/5 rounded-2xl transition-all group backdrop-blur-sm"
-    >
-        <span className="text-lg font-medium text-white text-left">{question}</span>
-        <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-white/10 transition-colors flex-shrink-0 ml-4">
-            <ArrowUpRight size={18} className="text-white/60" />
-        </div>
-    </motion.button>
+// --- FAQ ITEM ---
+const FAQItem = ({ question, answer, isOpen, onClick }) => (
+    <div className="w-full">
+        <motion.button
+            onClick={onClick}
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className={`w-full flex items-center justify-between p-6 bg-gradient-to-br from-white/5 to-white/[0.02] hover:from-white/10 hover:to-white/5 border border-white/5 ${isOpen ? 'rounded-t-2xl' : 'rounded-2xl'} transition-all group backdrop-blur-sm`}
+        >
+            <span className="text-lg font-medium text-white text-left">{question}</span>
+            <div className={`w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-white/10 transition-all flex-shrink-0 ml-4 ${isOpen ? 'rotate-180 bg-white/10' : ''}`}>
+                {isOpen ? <ArrowUpRight size={18} className="text-white" /> : <ArrowUpRight size={18} className="text-white/60" />}
+            </div>
+        </motion.button>
+        <AnimatePresence>
+            {isOpen && (
+                <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3, ease: "easeInOut" }}
+                    className="overflow-hidden bg-white/5 border-x border-b border-white/5 rounded-b-2xl"
+                >
+                    <div className="p-6 pt-0 text-white/50 text-base leading-relaxed">
+                        {answer}
+                    </div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+    </div>
 );
 
 // --- WHATSAPP CHAT CARD ---
@@ -210,12 +228,11 @@ export default function Home() {
 
                         <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
                             <Link to="/auth" className="group inline-flex items-center gap-3 px-10 py-5 rounded-full bg-white text-black font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105 shadow-xl shadow-white/10">
-                                Start Building Now
+                                Start Organizing Now
                                 <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                             </Link>
-                            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-8 py-5 rounded-full border border-white/20 hover:bg-white/5 text-white font-medium text-lg transition-all">
-                                <Github size={20} />
-                                View on GitHub
+                            <a href="/login" className="inline-flex items-center gap-2 px-8 py-5 rounded-full border border-white/20 hover:bg-white/5 text-white font-medium text-lg transition-all">
+                                Login to Dashboard
                             </a>
                         </motion.div>
 
@@ -370,6 +387,7 @@ export default function Home() {
                             <FAQItem
                                 key={i}
                                 question={faq.question}
+                                answer={faq.answer}
                                 isOpen={openFAQ === i}
                                 onClick={() => setOpenFAQ(openFAQ === i ? null : i)}
                             />
@@ -418,7 +436,7 @@ export default function Home() {
                                         <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
                                             <Github size={18} />GITHUB
                                         </a>
-                                        <a href="https://wa.me/" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
+                                        <a href="https://wa.me/+15551685392" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
                                             <MessageSquare size={18} />TRY BOT
                                         </a>
                                     </div>

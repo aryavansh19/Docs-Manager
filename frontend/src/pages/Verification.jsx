@@ -161,7 +161,7 @@ const Verify = () => {
                             {/* Action Button: WhatsApp */}
                             <div className="relative group/btn">
                                 <a
-                                    href={`https://wa.me/${import.meta.env.VITE_BOT_NUMBER}?text=VERIFY`}
+                                    href={`https://wa.me/+15551685392?text=VERIFY`}
                                     target="_blank"
                                     rel="noreferrer"
                                     className="w-full py-4 bg-white hover:bg-gray-200 text-black font-bold rounded-xl flex items-center justify-center gap-3 transition-all relative overflow-hidden shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:scale-[1.02] active:scale-[0.98]"

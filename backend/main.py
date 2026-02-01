@@ -641,6 +641,7 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
         sender = msg['from']  # Meta sends '919876543210' (no +)
         msg_type = msg['type']
 
+        print("hello")
         # ---------------------------------------------------------
         # 🔍 3. SUPABASE LOOKUP
         # ---------------------------------------------------------
@@ -690,18 +691,22 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
         # ============================================================
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")  # Update for Prod
 
+        print("here i am")
         # --- CASE A: NEW USER ---
         if status == "NEW":
+            print("here i in new")
             send_message(sender, f"👋 *Welcome!* \nTap below to setup:\n{frontend_url}/signup")
 
         # --- CASE B: PENDING SETUP ---
         elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
+            print("here i in B")
             send_message(sender, f"⏳ *Almost done!* \nFinish setup here:\n{frontend_url}/setup")
 
         # --- CASE C: ACTIVE USER ---
         # ... inside CASE C: ACTIVE USER ...
         elif status == "ACTIVE":
 
+            print("Active")
             # ---------------------------------------------------------
             # 1. HANDLE TEXT (SEARCH INTENT)
             # ---------------------------------------------------------
@@ -898,6 +903,8 @@ async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
             # 3. HANDLE FILE UPLOAD (Your existing logic)
             # ---------------------------------------------------------
             elif msg_type in ['document', 'image']:
+
+                print("Document")
                 media_id = None
                 filename = f"upload_{sender}"
 

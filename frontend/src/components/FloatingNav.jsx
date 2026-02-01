@@ -54,14 +54,19 @@ export default function FloatingNav() {
                     </Link>
 
                     {/* Links */}
+                    {/* Links */}
                     <div className="hidden md:flex items-center gap-8">
-                        {['Features', 'Solutions', 'Plans', 'Resources'].map((item) => (
+                        {[
+                            { label: 'Features', id: 'features' },
+                            { label: 'Workflow', id: 'how-it-works' },
+                            { label: 'Get in Touch', id: 'contact' }
+                        ].map((item) => (
                             <button
-                                key={item}
-                                onClick={() => scrollToSection(item.toLowerCase())}
+                                key={item.label}
+                                onClick={() => scrollToSection(item.id)}
                                 className="text-base font-medium text-white/70 hover:text-white transition-colors"
                             >
-                                {item}
+                                {item.label}
                             </button>
                         ))}
                     </div>
@@ -69,7 +74,7 @@ export default function FloatingNav() {
                     {/* Actions */}
                     <div className="flex items-center gap-3">
                         <Link to="/auth" className={`px-6 py-2.5 rounded-full text-base font-medium transition-all ${scrolled ? 'bg-white/10 text-white hover:bg-white hover:text-black' : 'bg-white text-black hover:bg-gray-200'}`}>
-                            Try DocFlow Free
+                            Start Organizing
                         </Link>
                         <button className="md:hidden p-2 text-white/80" onClick={() => setIsOpen(!isOpen)}>
                             {isOpen ? <X /> : <Menu />}
@@ -88,10 +93,14 @@ export default function FloatingNav() {
                         className="fixed inset-0 z-40 bg-[#0a0a0a] flex flex-col items-center justify-center gap-8 md:hidden"
                     >
                         <button onClick={() => setIsOpen(false)} className="absolute top-8 right-8 text-white/50 hover:text-white"><X size={32} /></button>
-                        {['Features', 'Solutions', 'Plans'].map((item) => (
-                            <button key={item} onClick={() => { scrollToSection(item.toLowerCase()); setIsOpen(false); }} className="text-3xl font-bold text-white hover:text-blue-400 transition-colors">{item}</button>
+                        {[
+                            { label: 'Features', id: 'features' },
+                            { label: 'Workflow', id: 'how-it-works' },
+                            { label: 'Get in Touch', id: 'contact' }
+                        ].map((item) => (
+                            <button key={item.label} onClick={() => { scrollToSection(item.id); setIsOpen(false); }} className="text-3xl font-bold text-white hover:text-blue-400 transition-colors">{item.label}</button>
                         ))}
-                        <Link to="/signup" className="w-64 py-4 rounded-full bg-white text-black font-bold text-center" onClick={() => setIsOpen(false)}>Get Started</Link>
+                        <Link to="/auth" className="w-64 py-4 rounded-full bg-white text-black font-bold text-center" onClick={() => setIsOpen(false)}>Start Organizing</Link>
                     </motion.div>
                 )}
             </AnimatePresence>

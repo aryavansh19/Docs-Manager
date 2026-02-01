@@ -10,7 +10,7 @@ export default function Footer() {
                     {/* Brand */}
                     <div className="md:col-span-4 lg:col-span-5 flex flex-col gap-5">
                         <Link to="/" className="flex items-center gap-2">
-                            <span className="px-3 py-1.5 bg-white text-black rounded-lg text-sm font-bold">Block</span>
+                            <span className="text-xl font-bold tracking-tighter text-white">DocsFlow</span>
                         </Link>
                         <p className="text-white/40 leading-relaxed max-w-sm text-sm">
                             The intelligent interface for your document organization.
@@ -49,10 +49,10 @@ export default function Footer() {
                 </div>
 
                 <div className="border-t border-white/10 pt-6 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-white/30">
-                    <p>© 2024 Block. All rights reserved.</p>
+                    <p>© 2024 DocsFlow. All rights reserved.</p>
                     <div className="flex gap-6">
-                        <Link to="#" className="hover:text-white transition-colors">Privacy</Link>
-                        <Link to="#" className="hover:text-white transition-colors">Terms</Link>
+                        <Link to="/privacy" className="hover:text-white transition-colors">Privacy</Link>
+                        <Link to="/terms" className="hover:text-white transition-colors">Terms</Link>
                         <Link to="#" className="hover:text-white transition-colors">Cookies</Link>
                     </div>
                 </div>
