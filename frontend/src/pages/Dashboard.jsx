@@ -252,19 +252,57 @@ export default function Dashboard() {
     return (
         <div className="flex h-screen bg-[#050505] text-white font-sans overflow-hidden">
             {/* Sidebar (Simplified) */}
-            <aside className="w-64 border-r border-white/5 bg-[#080808]/50 hidden md:flex flex-col p-4">
-                <div className="flex items-center gap-3 mb-8 px-4 py-4">
-                    <Terminal size={18} />
-                    <span className="font-bold">SmartDoc</span>
+            {/* Sidebar */}
+            <aside className="w-64 border-r border-white/5 bg-[#080808]/50 hidden md:flex flex-col justify-between p-4">
+
+                {/* Top Section */}
+                <div>
+                    <div className="flex items-center gap-3 mb-8 px-4 py-4">
+                        <Terminal size={18} />
+                        <span className="font-bold">SmartDoc</span>
+                    </div>
+
+                    <nav className="space-y-1">
+                        <button
+                            onClick={() => { setCurrentFolderId(userData?.root_folder_id); setBreadcrumbs([]); }}
+                            className={`w-full flex items-center gap-3 px-4 py-2 rounded-md text-sm transition-colors ${currentFolderId === userData?.root_folder_id ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+                        >
+                            <LayoutGrid size={16} /> <span>Drive</span>
+                        </button>
+
+                        <a
+                            href={`https://wa.me/${import.meta.env.VITE_BOT_NUMBER}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full flex items-center gap-3 px-4 py-2 text-white/40 hover:text-white hover:bg-white/5 rounded-md transition-colors text-sm"
+                        >
+                            <Clock size={16} /> <span>Bot Activity</span>
+                        </a>
+                    </nav>
                 </div>
-                <nav className="space-y-1">
-                    <button onClick={() => { setCurrentFolderId(userData.root_folder_id); setBreadcrumbs([]); }} className="w-full flex items-center gap-3 px-4 py-2 bg-white/10 rounded-md text-sm text-white">
-                        <LayoutGrid size={16} /> <span>Drive</span>
+
+                {/* 👇 BOTTOM SECTION: USER PROFILE & LOGOUT */}
+                <div className="pt-4 border-t border-white/5">
+                    <button
+                        onClick={async () => {
+                            await supabase.auth.signOut();
+                            window.location.href = "/login";
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors group"
+                    >
+                        <img
+                            src={`https://ui-avatars.com/api/?name=${userData?.name || "User"}&background=random`}
+                            alt="User"
+                            className="w-8 h-8 rounded-full bg-white/10 grayscale group-hover:grayscale-0 transition-all"
+                        />
+                        <div className="flex-1 text-left min-w-0">
+                            <div className="text-xs font-bold text-white/90 truncate">{userData?.name || "User"}</div>
+                            <div className="text-[10px] text-white/40 group-hover:text-red-400 transition-colors">Click to Log Out</div>
+                        </div>
+                        <LogOut size={14} className="opacity-0 group-hover:opacity-100 text-red-400 transition-opacity" />
                     </button>
-                    <a href={`https://wa.me/${import.meta.env.VITE_BOT_NUMBER}`} target="_blank" className="w-full flex items-center gap-3 px-4 py-2 text-white/40 hover:text-white transition-colors text-sm">
-                        <Clock size={16} /> <span>Bot Activity</span>
-                    </a>
-                </nav>
+                </div>
+
             </aside>
 
             {/* Main Content */}
