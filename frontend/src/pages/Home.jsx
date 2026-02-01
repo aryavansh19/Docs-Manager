@@ -433,7 +433,7 @@ export default function Home() {
                                         <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                                     </Link>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
+                                        <a href="https://github.com/aryavansh19" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
                                             <Github size={18} />GITHUB
                                         </a>
                                         <a href="https://wa.me/+15551685392" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
