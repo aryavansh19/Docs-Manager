@@ -15,6 +15,7 @@ from document_pipeline import (
     descriptive_filename,
     embed_texts,
     extract_document,
+    has_readable_image_text,
     is_placeholder_filename,
     safe_filename,
     sha256_bytes,
@@ -166,7 +167,10 @@ def ingest_and_index_document(
     # inference already performed while building metadata.
     image_embedding = None
     if mime_type.startswith("image/"):
-        description = describe_image(data)
+        description = describe_image(
+            data,
+            has_readable_text=has_readable_image_text(extracted.text),
+        )
         if description:
             image_embedding = description.vector
 

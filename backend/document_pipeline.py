@@ -295,7 +295,10 @@ _OBJECT_NOUNS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("a photo of a charger, cable or wires", "cable", "product_photo", ("cable", "charger", "wire", "wires", "cord")),
     ("a photo of a wristwatch", "watch", "product_photo", ("watch", "wristwatch", "timepiece")),
     ("a photo of spectacles or eyeglasses on a surface", "spectacles", "product_photo", ("spectacles", "glasses", "eyeglasses", "specs")),
-    ("a photo of shoes or footwear", "shoes", "product_photo", ("shoes", "footwear", "sneakers")),
+    ("a photo of shoes, sneakers or boots", "shoes", "product_photo", ("shoes", "footwear", "sneakers", "boots")),
+    # Separate from shoes because "shoes or footwear" matched a slipper only weakly, so
+    # the label lost to unrelated concepts.
+    ("a photo of slippers, sandals or flip flops", "slippers", "product_photo", ("slippers", "sandals", "flip flops", "chappal", "footwear")),
     ("a photo of clothing or a shirt on its own", "clothing", "product_photo", ("clothing", "clothes", "shirt", "apparel")),
     ("a photo of a water bottle or flask", "bottle", "product_photo", ("bottle", "flask", "water")),
     ("a photo of a cup of coffee or tea", "cup", "food_photo", ("cup", "coffee", "tea", "mug", "drink")),
@@ -320,12 +323,24 @@ _OBJECT_NOUNS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
 _OBJECT_PROBE_LABELS = {"product_photo", "photo", "food_photo", "vehicle_photo", "scenery_photo"}
 
 
+# Labels that describe a printed document, and are therefore only credible when OCR
+# actually read text. Visual labelling runs precisely because a photo carried almost no
+# text, so a confident zero-shot match to one of these is usually a weak similarity
+# score winning a short list rather than real evidence: a photo of a slipper was filed
+# as "Medical report or prescription", which also blocked object naming from running.
+# Deliberately excludes screenshots, charts and handwritten notes, where sparse OCR is
+# common and demoting the label would lose more than it gains.
+_TEXT_DEPENDENT_DOCUMENT_LABELS = frozenset({
+    "certificate", "identity_other", "invoice", "medical_report",
+})
+
+
 # Object names that are plural or uncountable, so an indefinite article reads wrongly.
 # Without this the caption for a pair of earphones was "Photo of a earphones", which
 # also became the document title and therefore the filename.
 _ARTICLELESS_OBJECT_NAMES = frozenset({
     "clothing", "earphones", "food", "fruit", "keys", "landscape", "medicine",
-    "money", "scenery", "shoes", "spectacles",
+    "money", "scenery", "shoes", "slippers", "spectacles",
 })
 
 
@@ -949,7 +964,9 @@ def build_metadata(
     # stray characters from clothing or background signage, and trusting those would
     # skip visual understanding and leave the file effectively unsearchable.
     if image_data and mime_type.startswith("image/") and _image_text_is_sparse(text):
-        description = describe_image(image_data)
+        # Reaching here means OCR produced nothing usable, which is exactly the case
+        # where a printed-document label cannot be trusted.
+        description = describe_image(image_data, has_readable_text=False)
         if description:
             fragment = re.sub(r"\s+", " ", text).strip()[:200]
             summary = f"{description.caption}. Recognised from image content."
@@ -1038,21 +1055,30 @@ def _get_prompt_vectors(text_encoder, prompts: list[str]) -> list[list[float]]:
     return [_prompt_vectors[prompt] for prompt in prompts]
 
 
-def describe_image(data: bytes) -> ImageDescription | None:
+def has_readable_image_text(text: str) -> bool:
+    """True when an image's OCR output is substantial enough to describe it."""
+    return not _image_text_is_sparse(text)
+
+
+def describe_image(data: bytes, *, has_readable_text: bool = False) -> ImageDescription | None:
     """Embed an image with CLIP and label it against a fixed concept list.
 
     This is the only source of searchable content for photographs, which produce no
     OCR text at all. The returned vector also powers visual search. Returns None when
     the vision models are unavailable.
+
+    ``has_readable_text`` reports whether OCR found usable text in this image. It gates
+    document labels that only make sense for pages of text.
     """
     global _last_image_analysis
     import tempfile
 
-    cache_key = sha256_bytes(data)
+    # The flag changes the label, so it belongs in the cache key.
+    cache_key = (sha256_bytes(data), has_readable_text)
     if _last_image_analysis and _last_image_analysis[0] == cache_key:
         return _last_image_analysis[1]
 
-    result = _describe_image_uncached(data, tempfile)
+    result = _describe_image_uncached(data, tempfile, has_readable_text)
     _last_image_analysis = (cache_key, result)
     return result
 
@@ -1142,7 +1168,11 @@ def _compose_caption(base_caption: str, label: str, fragments: list[str]) -> str
     return ", ".join([base_caption, *fragments])[:200]
 
 
-def _describe_image_uncached(data: bytes, tempfile) -> ImageDescription | None:
+def _describe_image_uncached(
+    data: bytes,
+    tempfile,
+    has_readable_text: bool = False,
+) -> ImageDescription | None:
     try:
         image_encoder, text_encoder = _get_image_encoders()
         concept_vectors = _get_prompt_vectors(text_encoder, [concept[0] for concept in _IMAGE_CONCEPTS])
@@ -1189,6 +1219,17 @@ def _describe_image_uncached(data: bytes, tempfile) -> ImageDescription | None:
     else:
         _, label, document_type, base_caption, concept_keywords = _IMAGE_CONCEPTS[best_index]
         keywords = list(concept_keywords)
+
+    # A prescription, bill, ID card or certificate is made of printed text. Claiming one
+    # of those for an image OCR could not read is unsupported by any evidence, and the
+    # label then suppressed object naming entirely, so the picture ended up with neither
+    # the right name nor any searchable noun. Demote to an unnamed photo and let the
+    # object probe below say what is actually pictured.
+    if label in _TEXT_DEPENDENT_DOCUMENT_LABELS and not has_readable_text:
+        label = "photo"
+        document_type = "photo"
+        base_caption = "Photograph"
+        keywords = ["photo", "image", "picture"]
 
     # For a generic "thing" photo, name the object. This supersedes the coarse label,
     # which is often simply wrong when the right option was missing from the short list.

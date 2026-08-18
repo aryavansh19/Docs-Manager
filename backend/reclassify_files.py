@@ -25,6 +25,7 @@ from document_pipeline import (
     describe_image,
     embed_texts,
     extract_document,
+    has_readable_image_text,
 )
 from google_auth import get_drive_service
 from supabase_client import supabase
@@ -185,7 +186,10 @@ def main() -> None:
                 payload["embedding"] = vectors[0]
 
             if mime_type.startswith("image/"):
-                description = describe_image(data)
+                description = describe_image(
+                    data,
+                    has_readable_text=has_readable_image_text(extracted.text),
+                )
                 if description and description.vector:
                     payload["image_embedding"] = description.vector
 
