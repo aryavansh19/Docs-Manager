@@ -12,8 +12,10 @@ from document_pipeline import (
     classify_document,
     describe_image,
     detect_mime_type,
+    descriptive_filename,
     embed_texts,
     extract_document,
+    is_placeholder_filename,
     safe_filename,
     sha256_bytes,
 )
@@ -113,7 +115,21 @@ def ingest_and_index_document(
     mime_type = detect_mime_type(data, claimed_mime_type, original_filename)
     file_name = safe_filename(original_filename, mime_type)
     extracted = extract_document(data, mime_type, file_name)
-    metadata = build_metadata(extracted, file_name, mime_type, image_data=data)
+
+    # A fabricated name must not seed the title. build_metadata falls back to the
+    # filename when a document has no usable heading, which previously turned
+    # "image_wamid.HBgM...jpg" into the document's title.
+    invented_name = is_placeholder_filename(original_filename)
+    metadata = build_metadata(
+        extracted,
+        "" if invented_name else file_name,
+        mime_type,
+        image_data=data,
+    )
+
+    # Name the file after what it contains, now that the content has been read.
+    if invented_name:
+        file_name = descriptive_filename(metadata.title, mime_type, fallback=file_name)
 
     # An image with no readable text but a recognised subject is still searchable, so it
     # is tracked separately from files nothing could be learned from.

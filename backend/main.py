@@ -33,7 +33,7 @@ from drive_search import (
 from folder_creator import append_folders_to_drive, build_drive_structure
 from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
-from Interative_List import send_interactive_list
+from Interative_List import send_cta_url, send_interactive_list
 from syllabus_parser import parse_syllabus
 from supabase_client import supabase
 
@@ -144,6 +144,17 @@ def send_buttons(to: str, text: str, buttons: list[dict[str, str]]) -> bool:
         return False
 
 
+def send_link(to: str, text: str, button_text: str, url: str) -> bool:
+    """Send a message with a tappable link button, degrading to plain text.
+
+    cta_url is not available on every WhatsApp Business account, so a failure must not
+    swallow the link entirely: the user still needs the URL to finish onboarding.
+    """
+    if send_cta_url(to, text, button_text, url):
+        return True
+    return send_message(to, f"{text}\n\n{url}")
+
+
 def get_drive_service(refresh_token: str):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -223,19 +234,19 @@ def trigger_file_send(to_number: str, user: dict[str, Any], drive_file_id: str, 
     service = get_drive_service(refresh_token)
     if not get_owned_file(user["id"], drive_file_id=drive_file_id):
         if not _drive_item_in_root(service, drive_file_id, user["root_folder_id"]):
-            send_message(to_number, "This file is not inside your DocsFlow workspace.")
+            send_message(to_number, "That file is not inside your DocsFlow workspace, so I cannot open it.")
             return False
 
     file_bytes = download_drive_file(refresh_token, drive_file_id)
     if not file_bytes:
-        send_message(to_number, "I could not download that file from Drive.")
+        send_message(to_number, "I could not fetch that file from Drive. Please try again.")
         return False
     payload = file_bytes.getvalue()
     mime_type = detect_mime_type(payload, None, filename)
     message_type = "image" if mime_type.startswith("image/") else "document"
     media_id = upload_to_whatsapp(io.BytesIO(payload), mime_type, filename)
     if not media_id:
-        send_message(to_number, "I could not prepare that file for WhatsApp.")
+        send_message(to_number, "I could not prepare that file to send. Please try again.")
         return False
 
     media_body: dict[str, Any] = {"id": media_id}
@@ -257,7 +268,7 @@ def trigger_file_send(to_number: str, user: dict[str, Any], drive_file_id: str, 
         return True
     except requests.RequestException as exc:
         print(f"WhatsApp file send failed: {exc}")
-        send_message(to_number, "I could not send that file right now.")
+        send_message(to_number, "I could not send that file right now. Please try again.")
         return False
 
 
@@ -424,18 +435,29 @@ async def run_folder_creation_worker(
             "root_folder_id": final_root_id,
             "status": "ACTIVE",
         }).eq("id", user_id).execute()
-        send_message(phone, "Your DocsFlow folders are ready. Send me a document whenever you like.")
+        send_message(
+            phone,
+            "*Your folders are ready.*\n\n"
+            "Send me a document whenever you like and I will file it automatically.",
+        )
     except RefreshError:
         print(f"Drive authorisation expired for {user_id}; folder creation aborted")
         supabase.table("profiles").update({"status": "CONNECTED"}).eq("id", user_id).execute()
-        send_message(
+        send_link(
             phone,
-            "I lost access to your Google Drive. Please reconnect it on the DocsFlow website, "
-            "then try creating your folders again.",
+            "I have lost access to your Google Drive, so I could not create your folders.\n\n"
+            "Reconnect Drive and I will pick up where I left off.",
+            "Reconnect Drive",
+            f"{FRONTEND_URL}/setup",
         )
     except Exception as exc:
         print(f"Folder creation failed for {user_id}: {exc}")
-        send_message(phone, "I could not finish creating your folders. Please try again from the website.")
+        send_link(
+            phone,
+            "I could not finish creating your folders. Nothing was lost — please try again.",
+            "Open dashboard",
+            f"{FRONTEND_URL}/dashboard",
+        )
 
 
 @app.post("/create-folders")
@@ -632,11 +654,17 @@ def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
             return
 
         if outcome.duplicate:
-            send_message(job["sender"], f"This file is already saved as {outcome.file_name} in {outcome.folder_label}.")
+            send_message(
+                job["sender"],
+                f"You have already sent this one.\n\n"
+                f"It is saved as *{outcome.file_name}* in {outcome.folder_label}.",
+            )
         elif outcome.extraction_status not in {"complete", "visual_only"}:
             send_message(
                 job["sender"],
-                f"Saved {outcome.file_name} in Imported Documents, but I could not read searchable text from it. You can still find it by filename.",
+                f"Saved *{outcome.file_name}* to Imported Documents.\n\n"
+                "I could not read any text inside it, so searching by content will not find "
+                "it — only by name.",
             )
         elif outcome.classification_status == "needs_confirmation" and outcome.alternatives:
             buttons = [
@@ -649,15 +677,16 @@ def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
             buttons.append({"id": f"CLASSIFY_KEEP:{outcome.file_id}", "title": "Keep imported"})
             send_buttons(
                 job["sender"],
-                f"Saved {outcome.file_name} safely in Imported Documents. Which folder fits best?",
+                f"Saved *{outcome.file_name}* — it is safe in Imported Documents.\n\n"
+                "I am not certain where it belongs. Which folder fits best?",
                 buttons,
             )
         else:
-            keywords = ", ".join(outcome.keywords[:5]) or "searchable content"
-            send_message(
-                job["sender"],
-                f"Saved {outcome.file_name} in {outcome.folder_label}.\nIndexed: {keywords}",
-            )
+            keywords = ", ".join(outcome.keywords[:5])
+            lines = [f"Saved *{outcome.file_name}* to {outcome.folder_label}."]
+            if keywords:
+                lines.append(f"\nFind it later with: {keywords}")
+            send_message(job["sender"], "\n".join(lines))
     except Exception as exc:
         print(f"Ingestion attempt failed for {job_id}: {exc}")
         failure = supabase.table("ingestion_jobs").update({
@@ -668,7 +697,10 @@ def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", job_id).eq("lease_token", lease_token).execute()
         if failure.data and int(job.get("attempt_count") or 0) >= 3:
-            send_message(job["sender"], "I could not process that file after several attempts. Please resend it.")
+            send_message(
+                job["sender"],
+                "I could not process that file after a few attempts. Please send it again.",
+            )
     finally:
         stop_heartbeat.set()
         heartbeat.join(timeout=2)
@@ -748,7 +780,10 @@ def _profile_for_phone(sender: str) -> dict[str, Any] | None:
 def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
     query = " ".join((query or "").split()).strip()
     if len(query) < 2:
-        send_message(sender, "Tell me a filename, topic, subject, date, or phrase from the document.")
+        send_message(
+            sender,
+            "Tell me a little more — a subject, topic, date, or any phrase from the document.",
+        )
         return
 
     folder_match = find_folder_match(user, query)
@@ -762,7 +797,15 @@ def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
             "title": "All files",
             "description": f"Everything in {folder_match['name']}",
         })
-        send_interactive_list(sender, f"{folder_match['name']} — choose a folder:", "Open", menu_items)
+        send_interactive_list(
+            sender,
+            f"*{folder_match['name']}* has {len(folder_match['children'])} folders inside.\n\n"
+            "Pick one to see what is in it.",
+            "Browse",
+            menu_items,
+            section_title="Folders",
+            header=folder_match["name"],
+        )
         return
 
     if folder_match and folder_match["type"] == "UNIT":
@@ -777,8 +820,13 @@ def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
             .data
         )
         if not files:
-            link = f"https://drive.google.com/drive/u/0/folders/{folder_match['id']}"
-            send_message(sender, f"{folder_match['name']} is empty.\n{link}")
+            send_link(
+                sender,
+                f"*{folder_match['name']}* is empty.\n\n"
+                "Forward a document here and I will file it there.",
+                "Open in Drive",
+                f"https://drive.google.com/drive/u/0/folders/{folder_match['id']}",
+            )
             return
         items = [
             {
@@ -793,13 +841,26 @@ def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
             "title": "Drive link",
             "description": "Open this folder in Drive",
         })
-        send_interactive_list(sender, f"{folder_match['name']} ({len(files)} files):", "Select file", items)
+        file_word = "file" if len(files) == 1 else "files"
+        send_interactive_list(
+            sender,
+            f"*{folder_match['name']}* has {len(files)} {file_word}.\n\n"
+            "Choose one and I will send it to you here.",
+            "Open folder",
+            items,
+            section_title="Newest first",
+            header=folder_match["name"],
+        )
         return
 
     results = search_files_in_db(user["id"], query, limit=10)
     if not results:
         record_search_feedback(user["id"], query, [], feedback_type="not_found")
-        send_message(sender, f"I could not find a confident match for “{query}”. Try a filename, topic, or phrase inside the file.")
+        send_message(
+            sender,
+            f"Nothing matched “*{query}*”.\n\n"
+            "Try a subject name, a topic from inside the file, or part of its name.",
+        )
         return
 
     if should_send_directly(results):
@@ -816,11 +877,15 @@ def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
             "title": result["file_name"],
             "description": description,
         })
+    match_word = "match" if len(results) == 1 else "matches"
     send_interactive_list(
         sender,
-        f"I found {len(results)} possible matches for “{query}”. Choose one:",
-        "View matches",
+        f"Found {len(results)} {match_word} for “*{query}*”.\n\n"
+        "Pick one and I will send it here.",
+        "See matches",
         items,
+        section_title="Best matches first",
+        footer="Most relevant listed first",
     )
 
 
@@ -845,10 +910,16 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
                 "status": "completed",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("file_id", file_id).eq("user_id", user["id"]).execute()
-            send_message(sender, f"Moved it to {label}. I’ll use this correction for future organization.")
+            send_message(
+                sender,
+                f"Moved it to *{label}*. I will remember this for similar files.",
+            )
         except Exception as exc:
             print(f"Classification correction failed: {exc}")
-            send_message(sender, "That folder choice is no longer available.")
+            send_message(
+                sender,
+                "That option has expired. Send the file again if you want to move it.",
+            )
         return
 
     if selected_id.startswith("CLASSIFY_KEEP:"):
@@ -862,7 +933,7 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
                 "status": "completed",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("file_id", file_id).eq("user_id", user["id"]).execute()
-            send_message(sender, "Kept it in Imported Documents.")
+            send_message(sender, "Left it in *Imported Documents*.")
         return
 
     if selected_id.startswith("BROWSE:"):
@@ -873,7 +944,13 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
             return
         items = list_drive_folder(user["google_token"]["refresh_token"], folder_id)
         if not items:
-            send_message(sender, "This folder is empty.")
+            send_link(
+                sender,
+                f"*{selected_title or 'That folder'}* is empty.\n\n"
+                "Forward a document here and I will file it for you.",
+                "Open in Drive",
+                f"https://drive.google.com/drive/u/0/folders/{folder_id}",
+            )
             return
         menu_items = [
             {
@@ -883,14 +960,30 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
             }
             for item in items
         ]
-        send_interactive_list(sender, f"Contents of {selected_title}:", "Open", menu_items)
+        folder_count = sum(
+            1 for item in items if item["mimeType"] == "application/vnd.google-apps.folder"
+        )
+        summary = f"{len(items) - folder_count} files"
+        if folder_count:
+            summary = f"{folder_count} folders and {summary}"
+        send_interactive_list(
+            sender,
+            f"*{selected_title}* contains {summary}.\n\nPick anything to open it.",
+            "Open",
+            menu_items,
+            section_title="Contents",
+            header=selected_title,
+        )
         return
 
     if selected_id.startswith("FILEID:"):
         file_id = selected_id.removeprefix("FILEID:")
         owned = get_owned_file(user["id"], file_id=file_id)
         if not owned:
-            send_message(sender, "That file is no longer available.")
+            send_message(
+                sender,
+                "I cannot find that file anymore — it may have been moved or deleted in Drive.",
+            )
             return
         trigger_file_send(sender, user, owned["drive_file_id"], owned["file_name"])
         return
@@ -904,7 +997,12 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
         folder_id = selected_id.removeprefix("FOLDERLINK:")
         service = get_drive_service(user["google_token"]["refresh_token"])
         if _drive_item_in_root(service, folder_id, user["root_folder_id"]):
-            send_message(sender, f"https://drive.google.com/drive/u/0/folders/{folder_id}")
+            send_link(
+                sender,
+                "Here is that folder in your Google Drive.",
+                "Open in Drive",
+                f"https://drive.google.com/drive/u/0/folders/{folder_id}",
+            )
 
 
 async def _handle_single_whatsapp_message(message: dict[str, Any], background_tasks: BackgroundTasks) -> None:
@@ -917,29 +1015,66 @@ async def _handle_single_whatsapp_message(message: dict[str, Any], background_ta
             text_body = message.get("text", {}).get("body", "").strip()
             if text_body.upper() == "VERIFY":
                 if not user:
-                    send_message(sender, "Account not found. Please sign up on DocsFlow first.")
+                    send_link(
+                        sender,
+                        "I do not have an account for this number yet.\n\n"
+                        "Sign up using this same WhatsApp number, then send *VERIFY* again.",
+                        "Create account",
+                        f"{FRONTEND_URL}/signup",
+                    )
                     return Response("User not found", status_code=200)
                 if not user.get("google_token"):
-                    send_message(sender, "Connect Google Drive on the website first.")
+                    send_link(
+                        sender,
+                        "I need access to your Google Drive before I can save anything.\n\n"
+                        "Your files stay in *your* Drive — I only organise them.",
+                        "Connect Drive",
+                        f"{FRONTEND_URL}/setup",
+                    )
                     return Response("Drive not linked", status_code=200)
                 new_status = "ACTIVE" if user.get("root_folder_id") else "CONNECTED"
                 supabase.table("profiles").update({
                     "status": new_status,
                     "whatsapp_verified": True,
                 }).eq("id", user["id"]).execute()
-                message_text = (
-                    "Verified. Send me a file to organize."
-                    if new_status == "ACTIVE"
-                    else "Verified. Return to your dashboard to finish folder setup."
-                )
-                send_message(sender, message_text)
+                if new_status == "ACTIVE":
+                    send_message(
+                        sender,
+                        "*You are all set.*\n\n"
+                        "Send me a PDF, Office file, photo, or scan and I will file it in your "
+                        "Drive.\n"
+                        "To find something later, just describe it in your own words.",
+                    )
+                else:
+                    send_link(
+                        sender,
+                        "*Number verified.* One step left — choose the folders you want.",
+                        "Set up folders",
+                        f"{FRONTEND_URL}/setup",
+                    )
                 return Response("Verified", status_code=200)
 
         status = user.get("status", "NEW") if user else "NEW"
         if status == "NEW":
-            send_message(sender, f"Welcome to DocsFlow. Create your account here:\n{FRONTEND_URL}/signup")
+            send_link(
+                sender,
+                "*DocsFlow* keeps your documents organised in your own Google Drive.\n\n"
+                "Forward a PDF, photo, or scan here. I read what is inside it, give it a "
+                "proper name, and file it in the right folder.\n\n"
+                "Need it later? Just describe it — say _\"physics unit 2\"_ — and I send it back.\n\n"
+                "Sign up with this number to begin.",
+                "Create account",
+                f"{FRONTEND_URL}/signup",
+            )
         elif status in {"CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"}:
-            send_message(sender, f"Finish your DocsFlow setup here:\n{FRONTEND_URL}/setup")
+            send_link(
+                sender,
+                "*Almost there.* Your account exists, but you have not set up your folders yet, "
+                "so I have nowhere to file things.\n\n"
+                "Finish setup and I will start organising everything you send here.",
+                "Finish setup",
+                f"{FRONTEND_URL}/setup",
+            )
         elif status == "ACTIVE" and user:
             if message_type == "text":
                 await asyncio.to_thread(
@@ -972,10 +1107,15 @@ async def _handle_single_whatsapp_message(message: dict[str, Any], background_ta
                         print(f"Could not enqueue ingestion: {exc}")
                         job_id = None
                     if job_id:
-                        send_message(sender, "Received. I’m extracting, organizing, and indexing it now.")
+                        send_message(sender, "Got it. Reading the contents and filing it now.")
                         background_tasks.add_task(process_ingestion_job, job_id)
             else:
-                send_message(sender, "Send a PDF, Office document, image, or a search query.")
+                send_message(
+                    sender,
+                    "I cannot read that kind of message.\n\n"
+                    "Send a *PDF, Word, Excel, PowerPoint, photo, or scan* to file it — "
+                    "or type a few words to search what you have already saved.",
+                )
     except Exception as exc:
         print(f"WhatsApp message handling failed: {exc}")
 

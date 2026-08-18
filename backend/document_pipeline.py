@@ -9,6 +9,7 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -318,6 +319,27 @@ _OBJECT_NOUNS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
 # documents are excluded: they have their own, better handling.
 _OBJECT_PROBE_LABELS = {"product_photo", "photo", "food_photo", "vehicle_photo", "scenery_photo"}
 
+
+# Object names that are plural or uncountable, so an indefinite article reads wrongly.
+# Without this the caption for a pair of earphones was "Photo of a earphones", which
+# also became the document title and therefore the filename.
+_ARTICLELESS_OBJECT_NAMES = frozenset({
+    "clothing", "earphones", "food", "fruit", "keys", "landscape", "medicine",
+    "money", "scenery", "shoes", "spectacles",
+})
+
+
+def _with_article(noun: str) -> str:
+    """Prefix an object name with the article that reads correctly, or none."""
+    name = (noun or "").strip()
+    if not name or name.lower() in _ARTICLELESS_OBJECT_NAMES:
+        return name
+    if " or " in name:
+        # "light or fan" reads as "a light or fan", not "a light or a fan".
+        return f"a {name}"
+    article = "an" if name[:1].lower() in "aeiou" else "a"
+    return f"{article} {name}"
+
 # With this many prompts, a uniform guess is under 0.03, so these bars are well above
 # chance while still admitting the honest uncertainty seen in testing.
 OBJECT_LABEL_THRESHOLD = 0.15
@@ -435,6 +457,72 @@ def safe_filename(original_filename: str, mime_type: str) -> str:
     if not extension:
         extension = mimetypes.guess_extension(mime_type) or ""
     return f"{stem[:120]}{extension[:12]}"
+
+
+# WhatsApp sends no filename for photos, so the webhook fabricates one from the
+# message id ("image_wamid.HBgMOTE5NjI3NDYzODgw...jpg"). Storing that verbatim put
+# unreadable names in Drive and gave filename search nothing to match on.
+_FABRICATED_MEDIA_STEM = re.compile(
+    r"^(?:image|document|video|audio|file)[_\-]?wamid[._\-]", re.IGNORECASE
+)
+
+# Strips the descriptive lead-in from a generated caption so the filename keeps only
+# the subject: "Photo of earphones" -> "earphones".
+_CAPTION_LEAD_IN = re.compile(
+    r"^(?:photo|photograph|picture|image|scan|screenshot)\s+of\s+(?:a|an|the)\s+|"
+    r"^(?:photo|photograph|picture|image|scan|screenshot)\s+of\s+",
+    re.IGNORECASE,
+)
+
+
+def is_placeholder_filename(name: str) -> bool:
+    """True when a filename carries no human meaning.
+
+    Distinguishes a real name the sender chose ("Unit 3 Notes.pdf") from one this
+    system invented because WhatsApp supplied none. Only the invented ones should be
+    replaced by a content-derived name.
+    """
+    stem = Path(name or "").stem.strip()
+    if not stem:
+        return True
+    if _FABRICATED_MEDIA_STEM.match(stem):
+        return True
+    # A long unbroken run of id-ish characters with no separators is a token, not a
+    # description a person typed.
+    return bool(re.fullmatch(r"[A-Za-z0-9+/=]{24,}", stem))
+
+
+def descriptive_filename(
+    title: str,
+    mime_type: str,
+    *,
+    fallback: str,
+    when: datetime | None = None,
+) -> str:
+    """Name a file after what it was found to contain.
+
+    The detected title is the only human description available for WhatsApp media, so
+    it becomes the filename. The date is appended because subjects repeat: several
+    photos of the same thing would otherwise collide on one name in Drive.
+
+    Returns ``fallback`` unchanged when the title yields nothing usable.
+    """
+    cleaned = _CAPTION_LEAD_IN.sub("", title or "", count=1).strip()
+    cleaned = unicodedata.normalize("NFKC", cleaned)
+    # Keep only characters that are safe in a filename across Drive and every OS.
+    cleaned = re.sub(r"[^\w \-()]+", " ", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ._-")
+    if not cleaned or not re.search(r"[A-Za-z0-9]", cleaned):
+        return fallback
+
+    stem = " ".join(cleaned.split()[:10])[:80].strip(" ._-")
+    if not stem:
+        return fallback
+    stem = stem[:1].upper() + stem[1:]
+
+    extension = Path(fallback).suffix.lower() or (mimetypes.guess_extension(mime_type) or "")
+    stamp = (when or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+    return f"{stem} {stamp}{extension[:12]}"
 
 
 def _normalize_text(text: str) -> str:
@@ -1108,7 +1196,7 @@ def _describe_image_uncached(data: bytes, tempfile) -> ImageDescription | None:
         named = _probe_objects(image_vector, text_encoder)
         if named:
             object_name, object_type, object_keywords = named
-            base_caption = f"Photo of a {object_name}"
+            base_caption = f"Photo of {_with_article(object_name)}"
             document_type = object_type
             label = object_type
             keywords = object_keywords
