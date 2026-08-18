@@ -1,311 +1,78 @@
-import os
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
 import io
-import time
 import json
+import os
+import threading
+from datetime import datetime, timezone
+from typing import Any, List
+
 import requests
 from dotenv import load_dotenv
-from fastapi import UploadFile, File
-# --- IMPORTS FROM OUR NEW MODULES ---
-
-import mimetypes
-from test_sorting import analyze_document, upload_and_index
-from folder_creator import build_drive_structure, append_folders_to_drive
-from fastapi.responses import JSONResponse, RedirectResponse
-from drive_search import search_files_in_db, get_drive_link, find_folder_match
-from Interative_List import send_interactive_list
-
-from starlette.middleware.sessions import SessionMiddleware
+from fastapi import BackgroundTasks, FastAPI, File, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from googleapiclient.discovery import build
+from fastapi.responses import JSONResponse
 from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from fastapi import FastAPI, Request, Response, BackgroundTasks
-from typing import List, Dict, Any
+from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
+
+from document_ingestion import apply_classification_choice, ingest_and_index_document
+from document_pipeline import MAX_FILE_BYTES, detect_mime_type
+from drive_search import (
+    find_folder_match,
+    get_owned_file,
+    record_search_feedback,
+    search_files_in_db,
+    should_send_directly,
+)
+from folder_creator import append_folders_to_drive, build_drive_structure
+from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
+from Interative_List import send_interactive_list
+from syllabus_parser import parse_syllabus
 from supabase_client import supabase
-import google.generativeai as genai
+
 
 load_dotenv()
 
-app = FastAPI()
-
-# 1. KEEP THIS: Required for Google OAuth (to remember user during redirects)
-app.add_middleware(SessionMiddleware, secret_key="super-secret-random-string",max_age=3600,
-    same_site="None",   # 👈 Critical: Allows cross-site cookies
-    https_only=True)
-
-# 2. ADD THIS: Allow React (Port 5173) to talk to Python (Port 8000)
-origins = [
-    "http://localhost:5173",  # Vite (React) default port
-    "http://localhost:3000",  # Just in case
-]
-
-# In main.py
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,    # This MUST be True for cookies to work
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-# --- CONFIG ---
 META_TOKEN = os.getenv("META_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+META_APP_SECRET = os.getenv("META_APP_SECRET")
+ALLOW_UNSIGNED_WEBHOOKS = os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "false").lower() == "true"
+META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v17.0")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+REQUEST_TIMEOUT = (10, 60)
 
 if not META_TOKEN or not PHONE_NUMBER_ID:
-    raise ValueError("❌ Missing Keys! Check your .env file.")
+    raise ValueError("Missing META_TOKEN or PHONE_NUMBER_ID in the backend environment")
 
-# --- MEMORY FOR BUTTONS ---
-pending_actions = {}
-
-from pydantic import BaseModel
-
-
-# 1. Define the Data Model (What React sends to Python)
-class SetupRequest(BaseModel):
-    phone: str
-    subjects: list[str]  # e.g., ["Physics", "Chemistry", "Maths"]
-
-# --- HELPER: Send Text ---
-def send_message(to, text):
-    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {META_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    requests.post(url, headers=headers, json={
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text}
-    })
+app = FastAPI()
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET", "local-development-only-change-me"),
+    max_age=3600,
+    same_site="none",
+    https_only=True,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(dict.fromkeys([
+        FRONTEND_URL,
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ])),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
-# --- HELPER: Send Buttons ---
-def send_buttons(to, text, buttons):
-    """
-    buttons = [{"id": "yes", "title": "Save"}, {"id": "no", "title": "Discard"}]
-    """
-    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {META_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    button_actions = [{"type": "reply", "reply": {"id": b["id"], "title": b["title"]}} for b in buttons]
-
-    data = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": text},
-            "action": {"buttons": button_actions}
-        }
-    }
-    requests.post(url, headers=headers, json=data)
-
-
-# --- HELPER: TRIGGER FILE SEND (ROBUST) ---
-def trigger_file_send(to_number, drive_file_id, filename):
-    print(f"🚀 Triggering send for: {filename}")
-
-    # 1. Get User Token
-    user_res = supabase.table('profiles').select("google_token").eq("phone", to_number).single().execute()
-    if not user_res.data: return
-    token = user_res.data['google_token']['refresh_token']
-
-    # 2. Download from Drive
-    file_bytes = download_drive_file(token, drive_file_id)
-
-    if file_bytes:
-        # ---------------------------------------------------------
-        # 🟢 FIX: DETECT REAL FILE TYPE (MAGIC BYTES)
-        # ---------------------------------------------------------
-        # Read the first 4 bytes to see what the file actually is
-        header = file_bytes.read(4)
-        file_bytes.seek(0)  # IMPORTANT: Reset pointer after reading!
-
-        mime_type = "application/pdf"  # Default
-
-        # Check signatures
-        if header.startswith(b'\xff\xd8'):
-            mime_type = "image/jpeg"
-        elif header.startswith(b'\x89PNG'):
-            mime_type = "image/png"
-        elif header.startswith(b'%PDF'):
-            mime_type = "application/pdf"
-        elif header.startswith(b'PK'):
-            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"  # Docx/Zip
-
-        print(f"🔍 Real detected type: {mime_type}")
-
-        # ---------------------------------------------------------
-        # 🟢 FIX: CHOOSE MESSAGE TYPE
-        # ---------------------------------------------------------
-        if mime_type.startswith("image/"):
-            msg_type = "image"
-        else:
-            msg_type = "document"
-
-        # 3. Upload to WhatsApp
-        media_id = upload_to_whatsapp(file_bytes, mime_type, filename)
-
-        if media_id:
-            # 4. Send Message
-            url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
-            headers = {"Authorization": f"Bearer {META_TOKEN}", "Content-Type": "application/json"}
-
-            data = {
-                "messaging_product": "whatsapp",
-                "to": to_number,
-                "type": msg_type,
-                msg_type: {
-                    "id": media_id,
-                    "caption": f"📄 {filename}" if msg_type == "document" else None
-                }
-            }
-
-            # For documents, force the filename to be correct
-            if msg_type == "document":
-                data["document"]["filename"] = filename
-
-            r = requests.post(url, headers=headers, json=data)
-            print(f"✅ Sent status: {r.status_code}")
-        else:
-            send_message(to_number, "⚠️ Error uploading file to WhatsApp.")
-    else:
-        send_message(to_number, "⚠️ Could not download file from Drive.")
-
-
-# --- HELPER: LIST FOLDER CONTENTS FROM DRIVE ---
-def list_drive_folder(google_token, folder_id):
-    try:
-        service = get_drive_service(google_token)
-        # Query: Inside this folder, not trashed
-        query = f"'{folder_id}' in parents and trashed=false"
-
-        results = service.files().list(
-            q=query,
-            pageSize=10,  # WhatsApp Limit
-            fields="files(id, name, mimeType)"
-        ).execute()
-
-        return results.get('files', [])
-    except Exception as e:
-        print(f"❌ Drive List Error: {e}")
-        return []
-
-
-@app.get("/")
-async def health_check():
-    return {"status": "online", "message": "Python Backend is runnning!"}
-
-
-# --- HELPER: Get Drive Service (Put this near other helpers) ---
-def get_drive_service(refresh_token):
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-    creds = Credentials(
-        None, refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id, client_secret=client_secret
-    )
-    return build('drive', 'v3', credentials=creds)
-
-
-# --- API: BROWSE DRIVE FOLDER ---
-@app.get("/api/drive/browse")
-async def browse_drive(request: Request, folder_id: str):
-    try:
-        # 1. AUTHENTICATION
-        auth_header = request.headers.get('Authorization')
-        if not auth_header: return Response("Missing Token", 401)
-        token = auth_header.replace("Bearer ", "")
-        user_res = supabase.auth.get_user(token)
-        if not user_res.user: return Response("Invalid Token", 401)
-        user_id = user_res.user.id
-
-        # 2. GET CREDENTIALS
-        profile = supabase.table('profiles').select("google_token, root_folder_id").eq('id', user_id).single().execute()
-        google_data = profile.data.get('google_token')
-        if not google_data: return Response("Google Drive not linked", 400)
-
-        service = get_drive_service(google_data['refresh_token'])
-
-        # ---------------------------------------------------------
-        # 3. VERIFY EXISTENCE (The Fix)
-        # ---------------------------------------------------------
-        try:
-            # We try to get the folder's metadata.
-            # If it's deleted/trashed, this throws an error.
-            folder_meta = service.files().get(
-                fileId=folder_id,
-                fields="id, name, trashed"
-            ).execute()
-
-            if folder_meta.get('trashed') is True:
-                raise Exception("Folder is in Trash")
-
-        except Exception as e:
-            print(f"⚠️ Folder {folder_id} not found or trashed.")
-
-            # OPTIONAL: If the ROOT folder is gone, we can reset the user's status!
-            saved_root = profile.data.get('root_folder_id')
-            if saved_root == folder_id:
-                print("🚨 Root folder deleted! Resetting user status...")
-                supabase.table('profiles').update({
-                    "status": "CONNECTED",  # Send them back to Setup
-                    "root_folder_id": None,
-                    "folder_map": None
-                }).eq('id', user_id).execute()
-
-                return JSONResponse({
-                    "error": "ROOT_DELETED",
-                    "message": "Your main folder was deleted. Please run setup again."
-                }, status_code=404)
-
-            return JSONResponse({
-                "error": "FOLDER_DELETED",
-                "message": "This folder no longer exists on Drive."
-            }, status_code=404)
-
-        # ---------------------------------------------------------
-        # 4. FETCH FILES (Only if it exists)
-        # ---------------------------------------------------------
-        query = f"'{folder_id}' in parents and trashed=false"
-        results = service.files().list(
-            q=query,
-            pageSize=100,
-            fields="files(id, name, mimeType, iconLink, webViewLink, thumbnailLink)"
-        ).execute()
-
-        items = results.get('files', [])
-
-        folders = []
-        files = []
-
-        for item in items:
-            clean_item = {
-                "id": item['id'],
-                "name": item['name'],
-                "mimeType": item['mimeType'],
-                "link": item['webViewLink']
-            }
-            if item['mimeType'] == 'application/vnd.google-apps.folder':
-                folders.append(clean_item)
-            else:
-                files.append(clean_item)
-
-        return {"folders": folders, "files": files}
-    except Exception as e:
-        print(f"❌ Browse Error: {str(e)}")
-        return Response(f"Error: {str(e)}", 500)
-
-
-
-# 1. Define the Data Model (Matches what Setup.jsx sends)
 class SubjectItem(BaseModel):
     name: str
     units: List[str] = []
@@ -315,630 +82,929 @@ class CreateFoldersRequest(BaseModel):
     subjects: List[SubjectItem]
 
 
-# --- BACKGROUND WORKER (Add to main.py) ---
-async def run_folder_creation_worker(user_id: str, phone: str, refresh_token: str, structure: dict, root_id: str = None,
-                                     existing_map: dict = None):
-    print(f"👷‍♂️ WORKER: Starting folder creation for {phone}...")
+def _meta_url(resource: str) -> str:
+    return f"https://graph.facebook.com/{META_GRAPH_VERSION}/{resource.lstrip('/')}"
+
+
+def _meta_headers(*, json_content: bool = False) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {META_TOKEN}"}
+    if json_content:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def send_message(to: str, text: str) -> bool:
+    try:
+        response = requests.post(
+            _meta_url(f"{PHONE_NUMBER_ID}/messages"),
+            headers=_meta_headers(json_content=True),
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "text",
+                "text": {"body": text[:4096]},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        print(f"WhatsApp text send failed: {exc}")
+        return False
+
+
+def send_buttons(to: str, text: str, buttons: list[dict[str, str]]) -> bool:
+    safe_buttons = [
+        {
+            "type": "reply",
+            "reply": {"id": button["id"][:256], "title": button["title"][:20]},
+        }
+        for button in buttons[:3]
+    ]
+    try:
+        response = requests.post(
+            _meta_url(f"{PHONE_NUMBER_ID}/messages"),
+            headers=_meta_headers(json_content=True),
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": text[:1024]},
+                    "action": {"buttons": safe_buttons},
+                },
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        print(f"WhatsApp button send failed: {exc}")
+        return False
+
+
+def get_drive_service(refresh_token: str):
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise ValueError("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET")
+    credentials = Credentials(
+        None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    return build("drive", "v3", credentials=credentials)
+
+
+def download_drive_file(refresh_token: str, file_id: str) -> io.BytesIO | None:
+    try:
+        request = get_drive_service(refresh_token).files().get_media(fileId=file_id)
+        file_data = io.BytesIO()
+        downloader = MediaIoBaseDownload(file_data, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        file_data.seek(0)
+        return file_data
+    except Exception as exc:
+        print(f"Drive download failed: {exc}")
+        return None
+
+
+def upload_to_whatsapp(file_bytes: io.BytesIO, mime_type: str, filename: str) -> str | None:
+    try:
+        response = requests.post(
+            _meta_url(f"{PHONE_NUMBER_ID}/media"),
+            headers=_meta_headers(),
+            files={"file": (filename, file_bytes, mime_type)},
+            data={"messaging_product": "whatsapp"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json().get("id")
+    except requests.RequestException as exc:
+        print(f"WhatsApp media upload failed: {exc}")
+        return None
+
+
+def _drive_item_in_root(service, file_id: str, root_id: str, max_depth: int = 12) -> bool:
+    """Validate ancestry before accepting a Drive ID supplied by an interaction."""
+    if file_id == root_id:
+        return True
+    frontier = [file_id]
+    visited: set[str] = set()
+    for _ in range(max_depth):
+        next_frontier: list[str] = []
+        for current_id in frontier:
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            try:
+                metadata = service.files().get(fileId=current_id, fields="id, parents, trashed").execute()
+            except Exception:
+                continue
+            if metadata.get("trashed"):
+                continue
+            parents = metadata.get("parents") or []
+            if root_id in parents:
+                return True
+            next_frontier.extend(parents)
+        if not next_frontier:
+            return False
+        frontier = next_frontier
+    return False
+
+
+def trigger_file_send(to_number: str, user: dict[str, Any], drive_file_id: str, filename: str) -> bool:
+    refresh_token = user["google_token"]["refresh_token"]
+    service = get_drive_service(refresh_token)
+    if not get_owned_file(user["id"], drive_file_id=drive_file_id):
+        if not _drive_item_in_root(service, drive_file_id, user["root_folder_id"]):
+            send_message(to_number, "This file is not inside your DocsFlow workspace.")
+            return False
+
+    file_bytes = download_drive_file(refresh_token, drive_file_id)
+    if not file_bytes:
+        send_message(to_number, "I could not download that file from Drive.")
+        return False
+    payload = file_bytes.getvalue()
+    mime_type = detect_mime_type(payload, None, filename)
+    message_type = "image" if mime_type.startswith("image/") else "document"
+    media_id = upload_to_whatsapp(io.BytesIO(payload), mime_type, filename)
+    if not media_id:
+        send_message(to_number, "I could not prepare that file for WhatsApp.")
+        return False
+
+    media_body: dict[str, Any] = {"id": media_id}
+    if message_type == "document":
+        media_body.update({"filename": filename, "caption": f"Document: {filename}"})
+    try:
+        response = requests.post(
+            _meta_url(f"{PHONE_NUMBER_ID}/messages"),
+            headers=_meta_headers(json_content=True),
+            json={
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": message_type,
+                message_type: media_body,
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        print(f"WhatsApp file send failed: {exc}")
+        send_message(to_number, "I could not send that file right now.")
+        return False
+
+
+def list_drive_folder(refresh_token: str, folder_id: str) -> list[dict[str, Any]]:
+    try:
+        response = get_drive_service(refresh_token).files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            pageSize=10,
+            fields="files(id, name, mimeType)",
+            orderBy="folder,name",
+        ).execute()
+        return response.get("files", [])
+    except Exception as exc:
+        print(f"Drive folder listing failed: {exc}")
+        return []
+
+
+def _authenticated_user_id(request: Request) -> str | None:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    try:
+        response = supabase.auth.get_user(auth_header.removeprefix("Bearer ").strip())
+        return response.user.id if response.user else None
+    except Exception:
+        return None
+
+
+@app.get("/")
+async def health_check():
+    return {
+        "status": "online",
+        "message": "DocsFlow backend is running",
+        "document_intelligence": "local",
+    }
+
+
+@app.get("/api/drive/browse")
+async def browse_drive(request: Request, folder_id: str):
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return Response("Invalid or missing token", status_code=401)
+
+    profile_response = (
+        supabase.table("profiles")
+        .select("google_token, root_folder_id")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not profile_response.data:
+        return Response("Profile not found", status_code=404)
+    profile = profile_response.data[0]
+    google_data = profile.get("google_token") or {}
+    root_folder_id = profile.get("root_folder_id")
+    if not google_data.get("refresh_token") or not root_folder_id:
+        return Response("Google Drive is not linked", status_code=400)
 
     try:
-        new_map = {}
-        final_root_id = root_id
+        service = get_drive_service(google_data["refresh_token"])
+        if not _drive_item_in_root(service, folder_id, root_folder_id):
+            return JSONResponse({"error": "FOLDER_NOT_OWNED"}, status_code=403)
 
-        # --- MODE 1: APPEND (If Root Exists) ---
-        if root_id:
-            items_to_add = {}
-            for subj, units in structure.items():
-                if subj not in (existing_map or {}):
-                    items_to_add[subj] = units
+        metadata = service.files().get(fileId=folder_id, fields="id, name, trashed").execute()
+        if metadata.get("trashed"):
+            raise _DriveItemGone("Folder is in trash")
+        response = service.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            pageSize=100,
+            fields="files(id, name, mimeType, webViewLink)",
+            orderBy="folder,name",
+        ).execute()
+    except RefreshError:
+        # An expired or revoked token says nothing about whether the folder exists.
+        # Treating it as a deletion previously wiped the user's whole folder mapping.
+        print(f"Drive authorisation expired for {user_id}; asking the user to reconnect")
+        return JSONResponse({"error": "DRIVE_REAUTH_REQUIRED"}, status_code=401)
+    except (_DriveItemGone, HttpError) as exc:
+        gone = isinstance(exc, _DriveItemGone) or getattr(getattr(exc, "resp", None), "status", None) in (404, 410)
+        if not gone:
+            print(f"Drive unavailable while browsing {folder_id}: {exc}")
+            return JSONResponse({"error": "DRIVE_UNAVAILABLE"}, status_code=503)
+        if folder_id == root_folder_id:
+            # Only clear the root pointer. folder_map is left alone so it can still be
+            # reconciled, and it is replaced wholesale when a new tree is built.
+            supabase.table("profiles").update({
+                "status": "CONNECTED",
+                "root_folder_id": None,
+            }).eq("id", user_id).execute()
+            return JSONResponse({"error": "ROOT_DELETED"}, status_code=404)
+        return JSONResponse({"error": "FOLDER_DELETED"}, status_code=404)
+    except Exception as exc:
+        print(f"Unexpected Drive error while browsing {folder_id}: {exc}")
+        return JSONResponse({"error": "DRIVE_UNAVAILABLE"}, status_code=503)
 
-            if items_to_add:
-                # Assuming append_folders_to_drive is imported
-                new_map = append_folders_to_drive(refresh_token, root_id, items_to_add)
-                if existing_map:
-                    existing_map.update(new_map)
-                    new_map = existing_map
-
-                    # --- MODE 2: FRESH SETUP (No Root) ---
+    folders, files = [], []
+    for item in response.get("files", []):
+        clean_item = {
+            "id": item["id"],
+            "name": item["name"],
+            "mimeType": item["mimeType"],
+            "link": item.get("webViewLink"),
+        }
+        if item["mimeType"] == "application/vnd.google-apps.folder":
+            folders.append(clean_item)
         else:
-            # Assuming build_drive_structure is imported
-            final_root_id, new_map = build_drive_structure(refresh_token, structure, folder_name_suffix=phone)
+            files.append(clean_item)
+    return {"folders": folders, "files": files}
 
-        # SAVE TO SUPABASE
-        print(f"💾 WORKER: Saving data to Supabase...")
-        supabase.table('profiles').update({
-            "folder_map": new_map,
+
+class _DriveItemGone(Exception):
+    """The Drive item genuinely no longer exists, as opposed to being unreachable."""
+
+
+def _sanitized_folder_map(existing_map: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only folder_map entries that carry a real Drive folder id.
+
+    folder_map must be {subject: {"id": ..., "units": {name: id}}}. Anything else cannot
+    be used for classification or retrieval, so it is dropped rather than propagated.
+    """
+    cleaned: dict[str, Any] = {}
+    for name, data in (existing_map or {}).items():
+        if not isinstance(data, dict) or not data.get("id"):
+            print(f"Dropping malformed folder_map entry for {name!r}")
+            continue
+        raw_units = data.get("units")
+        units = (
+            {str(unit): str(folder_id) for unit, folder_id in raw_units.items() if folder_id}
+            if isinstance(raw_units, dict)
+            else {}
+        )
+        cleaned[str(name)] = {"id": str(data["id"]), "units": units}
+    return cleaned
+
+
+async def run_folder_creation_worker(
+    user_id: str,
+    phone: str,
+    refresh_token: str,
+    structure: dict[str, list[str]],
+    root_id: str | None = None,
+    existing_map: dict[str, Any] | None = None,
+):
+    try:
+        if root_id:
+            # Only trust entries that actually carry a Drive folder id. A malformed entry
+            # would otherwise be merged forward and permanently corrupt the live map.
+            safe_existing = _sanitized_folder_map(existing_map)
+            items_to_add = {name: units for name, units in structure.items() if name not in safe_existing}
+            new_map = append_folders_to_drive(refresh_token, root_id, items_to_add) if items_to_add else {}
+            if items_to_add and not new_map:
+                raise RuntimeError("Drive rejected every folder creation")
+            final_map = {**safe_existing, **new_map}
+            final_root_id = root_id
+        else:
+            final_root_id, final_map = build_drive_structure(refresh_token, structure, folder_name_suffix=phone)
+            # Never persist a failed build. Writing an empty map with a null root used to
+            # leave the account looking ACTIVE while being completely unusable.
+            if not final_root_id or not final_map:
+                raise RuntimeError("Drive folder creation returned nothing")
+
+        supabase.table("profiles").update({
+            "folder_map": final_map,
             "root_folder_id": final_root_id,
-            "status": "ACTIVE"
-        }).eq('id', user_id).execute()
-
-        send_message(phone, "✅ *All set!* Your folders are ready.")
-        print(f"✅ WORKER: Finished successfully for {phone}")
-
-    except Exception as e:
-        print(f"❌ WORKER FAILED: {str(e)}")
+            "status": "ACTIVE",
+        }).eq("id", user_id).execute()
+        send_message(phone, "Your DocsFlow folders are ready. Send me a document whenever you like.")
+    except RefreshError:
+        print(f"Drive authorisation expired for {user_id}; folder creation aborted")
+        supabase.table("profiles").update({"status": "CONNECTED"}).eq("id", user_id).execute()
+        send_message(
+            phone,
+            "I lost access to your Google Drive. Please reconnect it on the DocsFlow website, "
+            "then try creating your folders again.",
+        )
+    except Exception as exc:
+        print(f"Folder creation failed for {user_id}: {exc}")
+        send_message(phone, "I could not finish creating your folders. Please try again from the website.")
 
 
 @app.post("/create-folders")
 async def create_folders_web(request: Request, background_tasks: BackgroundTasks):
-    print("🔔 API: Connection received! Parsing data...")  # <--- THIS WILL PRINT NOW
-
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return Response("Invalid or missing token", status_code=401)
     try:
-        # 1. READ BODY MANUALLY (Prevents validation hangs)
         body = await request.json()
-        print(f"📦 API: Received Data: {body}")
+        structure = {
+            item["name"].strip(): [unit.strip() for unit in item.get("units", []) if unit.strip()]
+            for item in body.get("subjects", [])
+            if item.get("name", "").strip()
+        }
+        profile_response = supabase.table("profiles").select(
+            "id, phone, google_token, root_folder_id, folder_map"
+        ).eq("id", user_id).limit(1).execute()
+        if not profile_response.data:
+            return Response("Profile not found", status_code=404)
+        user = profile_response.data[0]
+        google_data = user.get("google_token") or {}
+        if not google_data.get("refresh_token"):
+            return Response("Google Drive is not linked", status_code=400)
 
-        # Extract subjects safely
-        subjects_list = body.get('subjects', [])
-        structure = {item['name']: item.get('units', []) for item in subjects_list}
-
-        # 2. AUTHENTICATION
-        auth_header = request.headers.get('Authorization')
-        if not auth_header: return Response("Missing Token", 401)
-
-        token = auth_header.replace("Bearer ", "")
-        user_res = supabase.auth.get_user(token)
-        if not user_res.user: return Response("Invalid Token", 401)
-
-        user_id = user_res.user.id
-
-        # 3. GET USER DETAILS
-        profile = supabase.table('profiles').select("*").eq('id', user_id).single().execute()
-        user = profile.data
-
-        google_data = user.get('google_token')
-        if not google_data or 'refresh_token' not in google_data:
-            print("❌ API Error: Google Drive not linked")
-            return Response("Google Drive not linked", 400)
-
-        refresh_token = google_data['refresh_token']
-
-        # 4. INJECT DEFAULTS (For new users)
-        if not user.get('root_folder_id'):
+        if not user.get("root_folder_id"):
             defaults = {
                 "Important Documents": ["Aadhar Card", "PAN Card"],
                 "Screenshots": [],
                 "Identity Cards": [],
                 "Personal": [],
-                "Imported Documents": []
+                "Imported Documents": [],
             }
-            for k, v in defaults.items():
-                if k not in structure: structure[k] = v
+            # Only fall back to the defaults when the caller supplied nothing. Merging them
+            # over an explicit structure meant a folder the user deliberately removed came
+            # straight back, so the setup screen could not really be customised.
+            structure = structure or dict(defaults)
+            # The pipeline files anything it cannot place into this folder, so it has to
+            # exist regardless of what the user chose.
+            structure.setdefault("Imported Documents", [])
 
-        # 5. START BACKGROUND WORKER
         background_tasks.add_task(
             run_folder_creation_worker,
-            user_id=user_id,
-            phone=user.get('phone'),
-            refresh_token=refresh_token,
-            structure=structure,
-            root_id=user.get('root_folder_id'),
-            existing_map=user.get('folder_map')
+            user_id,
+            user.get("phone"),
+            google_data["refresh_token"],
+            structure,
+            user.get("root_folder_id"),
+            user.get("folder_map") or {},
         )
-
-        print("🚀 API: Background task started. Replying to Frontend.")
         return {"status": "processing", "message": "Creation started"}
-
-    except Exception as e:
-        print(f"❌ API CRASH: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return Response(f"Internal Error: {str(e)}", 500)
-
-
-# --- HELPER: PARSE SYLLABUS WITH GEMINI ---
-def parse_syllabus_with_gemini(file_bytes, mime_type):
-    model = genai.GenerativeModel('gemini-2.5-flash')
-
-    prompt = """
-    You are an academic assistant. Analyze this syllabus document.
-    1. Identify the 'Subjects' or 'Courses'.
-    2. For each subject, list the 'Units' or 'Chapters' or 'Modules'.
-
-    Return STRICT JSON format like this:
-    {
-      "Engineering Mathematics": ["Matrices", "Calculus", "Differential Equations"],
-      "Physics": ["Quantum Mechanics", "Optics", "Lasers"],
-      "Programming": ["C++ Basics", "OOPs", "Data Structures"]
-    }
-
-    If the document is unclear, do your best to structure it. Return ONLY JSON.
-    """
-
-    try:
-        response = model.generate_content([
-            {"mime_type": mime_type, "data": file_bytes},
-            prompt
-        ])
-
-        # Clean the response (remove ```json marks)
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
-    except Exception as e:
-        print(f"❌ Gemini Parse Error: {e}")
-        return {}  # Return empty dict on failure
-
+    except Exception as exc:
+        print(f"Create folders failed: {exc}")
+        return JSONResponse({"error": "Could not create folders"}, status_code=500)
 
 
 @app.post("/api/upload-syllabus")
 async def upload_syllabus(request: Request, file: UploadFile = File(...)):
+    user_id = _authenticated_user_id(request)
+    if not user_id:
+        return JSONResponse({"error": "Invalid or missing token"}, status_code=401)
     try:
-        # 1. AUTHENTICATION (Get User ID from Token)
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return JSONResponse({"error": "Missing Token"}, status_code=401)
-
-        token = auth_header.replace("Bearer ", "")
-        user_res = supabase.auth.get_user(token)
-
-        if not user_res.user:
-            return JSONResponse({"error": "Invalid Token"}, status_code=401)
-
-        user_id = user_res.user.id
-
-        # 2. READ FILE BYTES
-        # We read it into memory directly (no need to save to disk temporarily)
         file_content = await file.read()
-        mime_type = file.content_type
-
-        # 3. PARSE WITH GEMINI
-        print("🧠 Sending syllabus to Gemini...")
-        subjects_data = parse_syllabus_with_gemini(file_content, mime_type)
-
-        if not subjects_data:
-            return JSONResponse({"error": "Could not parse syllabus"}, status_code=400)
-
-        # 4. SAVE DRAFT TO SUPABASE
-        # We save this to 'folder_map' so the frontend can load it for editing
-        # We also set status to 'EDITING_LIST'
-        supabase.table('profiles').update({
-            "folder_map": subjects_data,
-            "status": "EDITING_LIST"
-        }).eq('id', user_id).execute()
-
-        print(f"✅ Parsed {len(subjects_data)} subjects for user {user_id}")
-
-        # 5. RETURN TO FRONTEND
-        return {
-            "success": True,
-            "subjects": subjects_data
-        }
-
-    except Exception as e:
-        print(f"❌ Upload Error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        if len(file_content) > MAX_FILE_BYTES:
+            return JSONResponse({"error": "Syllabus file is too large"}, status_code=413)
+        subjects = await asyncio.to_thread(
+            parse_syllabus,
+            file_content,
+            file.content_type,
+            file.filename or "syllabus.pdf",
+        )
+        if not subjects:
+            return JSONResponse({
+                "error": "No clear subject/unit headings were found. Add subjects manually or upload a clearer syllabus.",
+            }, status_code=400)
+        # This is only a preview for the user to edit. It must never be written to
+        # profiles.folder_map: that column holds live Drive folder IDs, and overwriting it
+        # with parsed names destroys the mapping to the user's actual folders. The map is
+        # only updated by run_folder_creation_worker, after folders really exist.
+        return {"success": True, "subjects": subjects}
+    except Exception as exc:
+        print(f"Local syllabus parsing failed: {exc}")
+        return JSONResponse({"error": "Could not parse this syllabus"}, status_code=500)
 
 
-
-# --- HELPER: DOWNLOAD MEDIA FROM META ---
-def get_meta_media(media_id):
-    # 1. Get the URL
-    url_info = f"https://graph.facebook.com/v17.0/{media_id}"
-    headers = {"Authorization": f"Bearer {META_TOKEN}"}
-
-    resp_info = requests.get(url_info, headers=headers).json()
-    media_url = resp_info.get('url')
-    mime_type = resp_info.get('mime_type')
-
-    if not media_url: return None, None
-
-    # 2. Download binary data
-    resp_data = requests.get(media_url, headers=headers)
-    return io.BytesIO(resp_data.content), mime_type
+def verify_meta_signature(raw_body: bytes, supplied_signature: str | None) -> bool:
+    if not META_APP_SECRET:
+        return ALLOW_UNSIGNED_WEBHOOKS
+    if not supplied_signature or not supplied_signature.startswith("sha256="):
+        return False
+    expected = "sha256=" + hmac.new(
+        META_APP_SECRET.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, supplied_signature)
 
 
-# --- BACKGROUND TASK: PROCESS FILE ---
-async def process_file_background(media_id, sender, original_filename):
-    print(f"🔄 Processing file {original_filename} for {sender}...")
+def get_meta_media(media_id: str) -> tuple[bytes | None, str | None]:
+    try:
+        info_response = requests.get(
+            _meta_url(media_id),
+            headers=_meta_headers(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        info_response.raise_for_status()
+        media_info = info_response.json()
+        media_url = media_info.get("url")
+        if not media_url:
+            return None, None
+        media_response = requests.get(
+            media_url,
+            headers=_meta_headers(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        media_response.raise_for_status()
+        if len(media_response.content) > MAX_FILE_BYTES:
+            raise ValueError(f"Media exceeds the {MAX_FILE_BYTES // (1024 * 1024)} MB limit")
+        return media_response.content, media_info.get("mime_type")
+    except Exception as exc:
+        print(f"Meta media download failed: {exc}")
+        return None, None
 
-    # 1. Download from Meta (WhatsApp)
-    file_bytes, mime_type = get_meta_media(media_id)
-    if not file_bytes:
-        send_message(sender, "❌ Failed to download file from WhatsApp servers.")
+
+def _claim_ingestion_job(job_id: str | None = None) -> dict[str, Any] | None:
+    response = supabase.rpc("claim_ingestion_job", {"p_job_id": job_id}).execute()
+    return response.data[0] if response.data else None
+
+
+def _renew_ingestion_lease(job_id: str, lease_token: str) -> bool:
+    try:
+        response = supabase.rpc("renew_ingestion_lease", {
+            "p_job_id": job_id,
+            "p_lease_token": lease_token,
+            "p_minutes": 30,
+        }).execute()
+        return response.data is True
+    except Exception as exc:
+        print(f"Could not renew ingestion lease for {job_id}: {exc}")
+        return False
+
+
+def _lease_heartbeat(stop_event: threading.Event, lost_event: threading.Event, job_id: str, lease_token: str) -> None:
+    while not stop_event.wait(60):
+        if not _renew_ingestion_lease(job_id, lease_token):
+            lost_event.set()
+            return
+
+
+def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
+    job_id = job["id"]
+    lease_token = job.get("lease_token")
+    stop_heartbeat = threading.Event()
+    lease_lost = threading.Event()
+    heartbeat = threading.Thread(
+        target=_lease_heartbeat,
+        args=(stop_heartbeat, lease_lost, job_id, lease_token),
+        daemon=True,
+    )
+    heartbeat.start()
+
+    def lease_guard() -> bool:
+        return not lease_lost.is_set() and _renew_ingestion_lease(job_id, lease_token)
+
+    try:
+        profile_response = supabase.table("profiles").select(
+            "id, phone, google_token, root_folder_id, folder_map, status"
+        ).eq("id", job["user_id"]).limit(1).execute()
+        if not profile_response.data:
+            raise ValueError("Profile disappeared before ingestion")
+        user = profile_response.data[0]
+        data, claimed_mime_type = get_meta_media(job["media_id"])
+        if not data:
+            raise ValueError("WhatsApp media could not be downloaded")
+
+        outcome = ingest_and_index_document(
+            user=user,
+            data=data,
+            claimed_mime_type=claimed_mime_type,
+            original_filename=job["original_filename"],
+            ingestion_job_id=job_id,
+            lease_guard=lease_guard,
+        )
+        final_status = "needs_confirmation" if outcome.classification_status == "needs_confirmation" else "completed"
+        completion = supabase.table("ingestion_jobs").update({
+            "status": final_status,
+            "file_id": outcome.file_id,
+            "drive_file_id": outcome.drive_file_id,
+            "lease_token": None,
+            "lease_expires_at": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat() if final_status == "completed" else None,
+        }).eq("id", job_id).eq("lease_token", lease_token).execute()
+        if not completion.data:
+            return
+
+        if outcome.duplicate:
+            send_message(job["sender"], f"This file is already saved as {outcome.file_name} in {outcome.folder_label}.")
+        elif outcome.extraction_status not in {"complete", "visual_only"}:
+            send_message(
+                job["sender"],
+                f"Saved {outcome.file_name} in Imported Documents, but I could not read searchable text from it. You can still find it by filename.",
+            )
+        elif outcome.classification_status == "needs_confirmation" and outcome.alternatives:
+            buttons = [
+                {
+                    "id": f"CLASSIFY:{outcome.file_id}:{index}",
+                    "title": candidate["label"].split(" / ")[-1],
+                }
+                for index, candidate in enumerate(outcome.alternatives[:2])
+            ]
+            buttons.append({"id": f"CLASSIFY_KEEP:{outcome.file_id}", "title": "Keep imported"})
+            send_buttons(
+                job["sender"],
+                f"Saved {outcome.file_name} safely in Imported Documents. Which folder fits best?",
+                buttons,
+            )
+        else:
+            keywords = ", ".join(outcome.keywords[:5]) or "searchable content"
+            send_message(
+                job["sender"],
+                f"Saved {outcome.file_name} in {outcome.folder_label}.\nIndexed: {keywords}",
+            )
+    except Exception as exc:
+        print(f"Ingestion attempt failed for {job_id}: {exc}")
+        failure = supabase.table("ingestion_jobs").update({
+            "status": "failed",
+            "last_error": str(exc)[:1000],
+            "lease_token": None,
+            "lease_expires_at": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", job_id).eq("lease_token", lease_token).execute()
+        if failure.data and int(job.get("attempt_count") or 0) >= 3:
+            send_message(job["sender"], "I could not process that file after several attempts. Please resend it.")
+    finally:
+        stop_heartbeat.set()
+        heartbeat.join(timeout=2)
+
+
+async def process_ingestion_job(job_id: str | None = None) -> bool:
+    job = await asyncio.to_thread(_claim_ingestion_job, job_id)
+    if not job:
+        return False
+    await asyncio.to_thread(_process_claimed_ingestion_job, job)
+    return True
+
+
+def enqueue_ingestion_job(
+    user_id: str,
+    sender: str,
+    message_id: str,
+    media_id: str,
+    message_type: str,
+    original_filename: str,
+) -> str | None:
+    existing = (
+        supabase.table("ingestion_jobs")
+        .select("id, status")
+        .eq("meta_message_id", message_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        existing_job = existing.data[0]
+        return existing_job["id"] if existing_job["status"] in {"queued", "processing", "failed"} else None
+    inserted = supabase.table("ingestion_jobs").insert({
+        "user_id": user_id,
+        "meta_message_id": message_id,
+        "sender": sender,
+        "media_id": media_id,
+        "message_type": message_type,
+        "original_filename": original_filename,
+        "status": "queued",
+    }).execute().data
+    return inserted[0]["id"] if inserted else None
+
+
+async def _ingestion_worker_loop() -> None:
+    while True:
+        try:
+            processed_any = False
+            for _ in range(10):
+                processed = await process_ingestion_job()
+                if not processed:
+                    break
+                processed_any = True
+            await asyncio.sleep(1 if processed_any else 5)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Ingestion worker loop failed: {exc}")
+            await asyncio.sleep(5)
+
+
+@app.on_event("startup")
+async def start_ingestion_worker():
+    asyncio.create_task(_ingestion_worker_loop())
+
+
+def _profile_for_phone(sender: str) -> dict[str, Any] | None:
+    response = supabase.table("profiles").select(
+        "id, phone, status, whatsapp_verified, google_token, root_folder_id, folder_map"
+    ).eq("phone", sender).limit(2).execute()
+    if len(response.data or []) != 1:
+        if response.data:
+            print("Rejected ambiguous phone-to-profile mapping")
+        return None
+    return response.data[0]
+
+
+def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
+    query = " ".join((query or "").split()).strip()
+    if len(query) < 2:
+        send_message(sender, "Tell me a filename, topic, subject, date, or phrase from the document.")
         return
 
-    # 2. Fetch User & Folder Map
-    # We need to know who the user is to get their folders
-    user_res = supabase.table('profiles').select("*").eq("phone", sender).single().execute()
-    user = user_res.data
-
-    if not user:
-        print(f"⚠️ User {sender} not found during background processing.")
+    folder_match = find_folder_match(user, query)
+    if folder_match and folder_match["type"] == "SUBJECT":
+        menu_items = [
+            {"id": f"BROWSE:{unit_id}", "title": unit_name, "description": "Unit folder"}
+            for unit_name, unit_id in folder_match["children"].items()
+        ]
+        menu_items.append({
+            "id": f"BROWSE:{folder_match['id']}",
+            "title": "All files",
+            "description": f"Everything in {folder_match['name']}",
+        })
+        send_interactive_list(sender, f"{folder_match['name']} — choose a folder:", "Open", menu_items)
         return
 
-    # 3. Analyze (Ask Gemini for Subject + Filename)
-    folder_map = user.get('folder_map', {})
+    if folder_match and folder_match["type"] == "UNIT":
+        files = (
+            supabase.table("files")
+            .select("id, drive_file_id, file_name, subject")
+            .eq("user_id", user["id"])
+            .eq("folder_id", folder_match["id"])
+            .order("created_at", desc=True)
+            .limit(9)
+            .execute()
+            .data
+        )
+        if not files:
+            link = f"https://drive.google.com/drive/u/0/folders/{folder_match['id']}"
+            send_message(sender, f"{folder_match['name']} is empty.\n{link}")
+            return
+        items = [
+            {
+                "id": f"FILEID:{row['id']}",
+                "title": row["file_name"],
+                "description": row.get("subject") or "Document",
+            }
+            for row in files
+        ]
+        items.append({
+            "id": f"FOLDERLINK:{folder_match['id']}",
+            "title": "Drive link",
+            "description": "Open this folder in Drive",
+        })
+        send_interactive_list(sender, f"{folder_match['name']} ({len(files)} files):", "Select file", items)
+        return
 
-    analysis = analyze_document(file_bytes, mime_type, folder_map)
+    results = search_files_in_db(user["id"], query, limit=10)
+    if not results:
+        record_search_feedback(user["id"], query, [], feedback_type="not_found")
+        send_message(sender, f"I could not find a confident match for “{query}”. Try a filename, topic, or phrase inside the file.")
+        return
 
-    # 4. Upload & Index (Save to Drive & DB)
-    # Notice we pass 'original_filename' so we preserve the extension (.pdf/.jpg)
-    saved_subject = upload_and_index(
-        user_id=user['id'],
-        google_token=user['google_token']['refresh_token'],
-        file_obj=file_bytes,
-        mime_type=mime_type,
-        original_filename=original_filename,
-        analysis=analysis,
-        folder_map=folder_map,
-        root_id=user['root_folder_id']
+    if should_send_directly(results):
+        result = results[0]
+        if trigger_file_send(sender, user, result["drive_file_id"], result["file_name"]):
+            record_search_feedback(user["id"], query, results, result.get("id"))
+        return
+
+    items = []
+    for result in results:
+        description = result.get("subject") or result.get("document_type") or "Document"
+        items.append({
+            "id": f"FILEID:{result['id']}",
+            "title": result["file_name"],
+            "description": description,
+        })
+    send_interactive_list(
+        sender,
+        f"I found {len(results)} possible matches for “{query}”. Choose one:",
+        "View matches",
+        items,
     )
 
-    # 5. Notify User
-    # We show them the new name Gemini chose!
-    new_name = analysis.get('filename', original_filename)
-    tags_str = ", ".join(analysis.get('tags', []))
 
-    send_message(sender, f"✅ Saved as *{new_name}* in *{saved_subject}* folder!\n🏷️ Tags: {tags_str}")
+def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str, Any]) -> None:
+    interaction_type = interaction.get("type")
+    if interaction_type == "button_reply":
+        reply = interaction.get("button_reply") or {}
+        selected_id = reply.get("id", "")
+        selected_title = reply.get("title", "")
+    elif interaction_type == "list_reply":
+        reply = interaction.get("list_reply") or {}
+        selected_id = reply.get("id", "")
+        selected_title = reply.get("title", "")
+    else:
+        return
+
+    if selected_id.startswith("CLASSIFY:"):
+        _, file_id, raw_index = selected_id.split(":", 2)
+        try:
+            label = apply_classification_choice(user, file_id, int(raw_index))
+            supabase.table("ingestion_jobs").update({
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("file_id", file_id).eq("user_id", user["id"]).execute()
+            send_message(sender, f"Moved it to {label}. I’ll use this correction for future organization.")
+        except Exception as exc:
+            print(f"Classification correction failed: {exc}")
+            send_message(sender, "That folder choice is no longer available.")
+        return
+
+    if selected_id.startswith("CLASSIFY_KEEP:"):
+        file_id = selected_id.removeprefix("CLASSIFY_KEEP:")
+        owned = get_owned_file(user["id"], file_id=file_id)
+        if owned:
+            supabase.table("files").update({"classification_status": "user_confirmed"}).eq(
+                "id", file_id
+            ).eq("user_id", user["id"]).execute()
+            supabase.table("ingestion_jobs").update({
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("file_id", file_id).eq("user_id", user["id"]).execute()
+            send_message(sender, "Kept it in Imported Documents.")
+        return
+
+    if selected_id.startswith("BROWSE:"):
+        folder_id = selected_id.removeprefix("BROWSE:")
+        service = get_drive_service(user["google_token"]["refresh_token"])
+        if not _drive_item_in_root(service, folder_id, user["root_folder_id"]):
+            send_message(sender, "That folder is not inside your DocsFlow workspace.")
+            return
+        items = list_drive_folder(user["google_token"]["refresh_token"], folder_id)
+        if not items:
+            send_message(sender, "This folder is empty.")
+            return
+        menu_items = [
+            {
+                "id": f"BROWSE:{item['id']}" if item["mimeType"] == "application/vnd.google-apps.folder" else f"DRIVEFILE:{item['id']}",
+                "title": item["name"],
+                "description": "Folder" if item["mimeType"] == "application/vnd.google-apps.folder" else "Document",
+            }
+            for item in items
+        ]
+        send_interactive_list(sender, f"Contents of {selected_title}:", "Open", menu_items)
+        return
+
+    if selected_id.startswith("FILEID:"):
+        file_id = selected_id.removeprefix("FILEID:")
+        owned = get_owned_file(user["id"], file_id=file_id)
+        if not owned:
+            send_message(sender, "That file is no longer available.")
+            return
+        trigger_file_send(sender, user, owned["drive_file_id"], owned["file_name"])
+        return
+
+    if selected_id.startswith("DRIVEFILE:"):
+        drive_file_id = selected_id.removeprefix("DRIVEFILE:")
+        trigger_file_send(sender, user, drive_file_id, selected_title or "document")
+        return
+
+    if selected_id.startswith("FOLDERLINK:"):
+        folder_id = selected_id.removeprefix("FOLDERLINK:")
+        service = get_drive_service(user["google_token"]["refresh_token"])
+        if _drive_item_in_root(service, folder_id, user["root_folder_id"]):
+            send_message(sender, f"https://drive.google.com/drive/u/0/folders/{folder_id}")
 
 
-
-# --- HELPER: DOWNLOAD FROM DRIVE ---
-def download_drive_file(google_token, file_id):
+async def _handle_single_whatsapp_message(message: dict[str, Any], background_tasks: BackgroundTasks) -> None:
     try:
-        service = get_drive_service(google_token)
-        # request to get the file content
-        request = service.files().get_media(fileId=file_id)
+        sender = message["from"]
+        message_type = message["type"]
+        user = _profile_for_phone(sender)
 
-        file_data = io.BytesIO()
-        downloader = MediaIoBaseDownload(file_data, request)
+        if message_type == "text":
+            text_body = message.get("text", {}).get("body", "").strip()
+            if text_body.upper() == "VERIFY":
+                if not user:
+                    send_message(sender, "Account not found. Please sign up on DocsFlow first.")
+                    return Response("User not found", status_code=200)
+                if not user.get("google_token"):
+                    send_message(sender, "Connect Google Drive on the website first.")
+                    return Response("Drive not linked", status_code=200)
+                new_status = "ACTIVE" if user.get("root_folder_id") else "CONNECTED"
+                supabase.table("profiles").update({
+                    "status": new_status,
+                    "whatsapp_verified": True,
+                }).eq("id", user["id"]).execute()
+                message_text = (
+                    "Verified. Send me a file to organize."
+                    if new_status == "ACTIVE"
+                    else "Verified. Return to your dashboard to finish folder setup."
+                )
+                send_message(sender, message_text)
+                return Response("Verified", status_code=200)
 
-        done = False
-        while done is False:
-            status, done = downloader.next_chunk()
-
-        file_data.seek(0)  # Reset pointer to start
-        return file_data
-    except Exception as e:
-        print(f"❌ Drive Download Error: {e}")
-        return None
-
-
-# --- HELPER: UPLOAD TO WHATSAPP (Get Media ID) ---
-def upload_to_whatsapp(file_bytes, mime_type, filename):
-    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/media"
-    headers = {
-        "Authorization": f"Bearer {META_TOKEN}"
-    }
-
-    # Files structure for requests
-    files = {
-        'file': (filename, file_bytes, mime_type)
-    }
-    data = {
-        'messaging_product': 'whatsapp'
-    }
-
-    try:
-        r = requests.post(url, headers=headers, files=files, data=data)
-        return r.json().get('id')
-    except Exception as e:
-        print(f"❌ Meta Upload Error: {e}")
-        return None
+        status = user.get("status", "NEW") if user else "NEW"
+        if status == "NEW":
+            send_message(sender, f"Welcome to DocsFlow. Create your account here:\n{FRONTEND_URL}/signup")
+        elif status in {"CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"}:
+            send_message(sender, f"Finish your DocsFlow setup here:\n{FRONTEND_URL}/setup")
+        elif status == "ACTIVE" and user:
+            if message_type == "text":
+                await asyncio.to_thread(
+                    _handle_text_search,
+                    sender,
+                    user,
+                    message.get("text", {}).get("body", ""),
+                )
+            elif message_type == "interactive":
+                await asyncio.to_thread(_handle_interaction, sender, user, message.get("interactive") or {})
+            elif message_type in {"document", "image"}:
+                media = message[message_type]
+                media_id = media.get("id")
+                filename = (
+                    media.get("filename", f"document_{message['id']}.pdf")
+                    if message_type == "document"
+                    else f"image_{message['id']}.jpg"
+                )
+                if media_id:
+                    try:
+                        job_id = enqueue_ingestion_job(
+                            user["id"],
+                            sender,
+                            message["id"],
+                            media_id,
+                            message_type,
+                            filename,
+                        )
+                    except Exception as exc:
+                        print(f"Could not enqueue ingestion: {exc}")
+                        job_id = None
+                    if job_id:
+                        send_message(sender, "Received. I’m extracting, organizing, and indexing it now.")
+                        background_tasks.add_task(process_ingestion_job, job_id)
+            else:
+                send_message(sender, "Send a PDF, Office document, image, or a search query.")
+    except Exception as exc:
+        print(f"WhatsApp message handling failed: {exc}")
 
 
 @app.post("/webhook")
 async def receive_whatsapp(request: Request, background_tasks: BackgroundTasks):
+    raw_body = await request.body()
+    if not verify_meta_signature(raw_body, request.headers.get("X-Hub-Signature-256")):
+        return Response("Invalid signature", status_code=401)
     try:
-        data = await request.json()
+        data = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return Response("Invalid JSON", status_code=400)
 
-        # ---------------------------------------------------------
-        # 🛡️ 1. SAFETY CHECKS
-        # ---------------------------------------------------------
-        entry = data.get('entry', [])
-        if not entry or not entry[0].get('changes'):
-            return Response(content="No Data", status_code=200)
-
-        value = entry[0]['changes'][0].get('value')
-
-        # Ignore status updates (read receipts)
-        if not value or 'messages' not in value:
-            return Response(content="Ignored", status_code=200)
-
-        # ---------------------------------------------------------
-        # 📩 2. EXTRACT MESSAGE INFO
-        # ---------------------------------------------------------
-        msg = value['messages'][0]
-        sender = msg['from']  # Meta sends '919876543210' (no +)
-        msg_type = msg['type']
-
-        print("hello")
-        # ---------------------------------------------------------
-        # 🔍 3. SUPABASE LOOKUP
-        # ---------------------------------------------------------
-        user = {}
-        status = "NEW"
-
-        try:
-            # We assume your DB stores phones like '919876543210' or '+91...'
-            # Meta sends clean numbers usually. You might need to add/remove '+' depending on your DB.
-            response = supabase.table('profiles').select("*").eq("phone", sender).execute()
-            if response.data:
-                user = response.data[0]
-                status = user.get('status', 'NEW')
-        except Exception as e:
-            print(f"⚠️ DB Error: {e}")
-
-        # ============================================================
-        # 🚀 4. VERIFICATION INTERCEPTOR (Your Logic)
-        # ============================================================
-        if msg_type == 'text':
-            text_body = msg.get('text', {}).get('body', '').strip().upper()
-
-            if text_body == "VERIFY":
-                if not user:
-                    send_message(sender, "⚠️ *Account Not Found*\nPlease sign up at docflow.ai first.")
-                    return Response(content="User Not Found", status_code=200)
-
-                if not user.get("google_token"):
-                    send_message(sender, "⚠️ *Google Login Missing*\nPlease login on the website first.")
-                    return Response(content="No Token", status_code=200)
-
-                # Determine new status
-                new_status = "ACTIVE" if user.get("root_folder_id") else "CONNECTED"
-
-                # Update DB
-                supabase.table('profiles').update({"status": new_status}).eq("phone", sender).execute()
-
-                if new_status == "ACTIVE":
-                    send_message(sender, "✅ *Verified!* Send me a file to organize.")
-                else:
-                    send_message(sender, "✅ *Linked!* Check your dashboard to finish setup.")
-
-                return Response(content="Verified", status_code=200)
-
-        # ============================================================
-        # 🚦 5. STATUS HANDLER
-        # ============================================================
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")  # Update for Prod
-
-        print("here i am")
-        # --- CASE A: NEW USER ---
-        if status == "NEW":
-            print("here i in new")
-            send_message(sender, f"👋 *Welcome!* \nTap below to setup:\n{frontend_url}/signup")
-
-        # --- CASE B: PENDING SETUP ---
-        elif status in ["CONNECTED", "AWAITING_SYLLABUS", "EDITING_LIST"]:
-            print("here i in B")
-            send_message(sender, f"⏳ *Almost done!* \nFinish setup here:\n{frontend_url}/setup")
-
-        # --- CASE C: ACTIVE USER ---
-        # ... inside CASE C: ACTIVE USER ...
-        elif status == "ACTIVE":
-
-            print("Active")
-            # ---------------------------------------------------------
-            # 1. HANDLE TEXT (SEARCH INTENT)
-            # ---------------------------------------------------------
-            if msg_type == 'text':
-
-                text_body = msg.get('text', {}).get('body', '')
-
-                # 1. AGGRESSIVE CLEANING
-                # Remove all these common "bot words" so we are left with just the Topic
-                stop_words = ["find", "search", "show", "give", "get", "notes", "for", "me", "my", "the", "files",
-                              "document"]
-
-                clean_query = text_body.lower()
-                for word in stop_words:
-                    clean_query = clean_query.replace(word, "")
-
-                clean_query = clean_query.strip()
-
-                # ... (Rest of logic remains the same) ...
-                folder_match = find_folder_match(user, clean_query)
-
-                if folder_match:
-                    # == CASE A: IT IS A SUBJECT (e.g. "Full Stack") ==
-                    if folder_match['type'] == 'SUBJECT':
-                        subject_name = folder_match['name']
-                        units = folder_match['children']
-
-                        menu_items = []
-                        # List all Units in this Subject
-                        for unit_name, unit_id in units.items():
-                            menu_items.append({
-                                "id": f"BROWSE:{unit_id}",
-                                "title": unit_name[:24],
-                                "description": "Unit Folder"
-                            })
-
-                        # Always add a "View All Files" option
-                        menu_items.append({
-                            "id": f"BROWSE:{folder_match['id']}",
-                            "title": "📂 All Files",
-                            "description": f"Everything in {subject_name}"
-                        })
-
-                        send_interactive_list(
-                            to_number=sender,
-                            body_text=f"📂 *{subject_name}*\nSelect a Unit to browse:",
-                            button_text="Open Unit",
-                            items=menu_items
-                        )
-                        return Response(content="OK", status_code=200)
-
-                    # == CASE B: IT IS A UNIT (e.g. "React JS") ==
-                    elif folder_match['type'] == 'UNIT':
-                        unit_name = folder_match['name']
-                        unit_id = folder_match['id']
-
-                        # 1. Check if files exist in this Unit (Database Query)
-                        # We do NOT rely on keywords. We strictly check "folder_id".
-                        files_in_unit = supabase.table('files') \
-                            .select("*") \
-                            .eq("user_id", user['id']) \
-                            .eq("folder_id", unit_id) \
-                            .execute().data
-
-                        if not files_in_unit:
-                            # ✅ THE "EMPTY FOLDER" HANDLING
-                            link = f"https://drive.google.com/drive/u/0/folders/{unit_id}"
-                            send_message(sender, f"ZE *{unit_name}* is empty.\n\nupload files here:\n{link}")
-                        else:
-                            # Show the file menu
-                            menu_items = []
-                            for f in files_in_unit[:9]:
-                                menu_items.append({
-                                    "id": f"FILE:{f['drive_file_id']}",
-                                    "title": f['file_name'][:24],
-                                    "description": "Tap to download"
-                                })
-
-                            # Add Link option
-                            menu_items.append({
-                                "id": f"CMD:FOLDER_LINK",
-                                # You might need to pass specific folder ID here if you want deep linking
-                                "title": "🔗 Drive Link",
-                                "description": "View in Google Drive"
-                            })
-
-                            send_interactive_list(
-                                to_number=sender,
-                                body_text=f"📂 *{unit_name}* ({len(files_in_unit)} files):",
-                                button_text="Select File",
-                                items=menu_items
-                            )
-                        return Response(content="OK", status_code=200)
-
-                # ---------------------------------------------------------
-                # 🔵 STRATEGY 2: GLOBAL FILE SEARCH (Fallback)
-                # ---------------------------------------------------------
-                # Only runs if user query didn't match any Subject or Unit name
-                results = search_files_in_db(user['id'], clean_query)
-
-                if not results:
-                    send_message(sender, f"❌ No folders or files found for '{clean_query}'.")
-
-                elif len(results) == 1:
-                    # If it's a specific file match, send it directly
-                    f = results[0]
-                    trigger_file_send(sender, f['drive_file_id'], f['file_name'])
-
-                else:
-                    # Show mixed file results
-                    menu_items = []
-                    for f in results[:10]:
-                        menu_items.append({
-                            "id": f"FILE:{f['drive_file_id']}",
-                            "title": f['file_name'][:24],
-                            "description": f.get('subject', 'File')
-                        })
-
-                    send_interactive_list(
-                        to_number=sender,
-                        body_text=f"🔍 Found {len(results)} files for '{clean_query}':",
-                        button_text="View Results",
-                        items=menu_items
-                    )
-
-            # ---------------------------------------------------------
-            # 2. HANDLE INTERACTIVE (MENU CLICKS) 🟢 (NEW)
-            # ---------------------------------------------------------
-                    # ... inside 'elif msg_type == interactive' ...
-            elif msg_type == 'interactive':
-                    interaction = msg['interactive']
-
-                    if interaction['type'] == 'list_reply':
-                        selected_id = interaction['list_reply']['id']
-                        selected_title = interaction['list_reply']['title']
-
-                        # ====================================================
-                        # 🟢 CASE 1: USER WANTS TO OPEN A FOLDER (Drill Down)
-                        # ====================================================
-                        if selected_id.startswith("BROWSE:"):
-                            folder_id = selected_id.replace("BROWSE:", "")
-
-                            send_message(sender, f"📂 Opening *{selected_title}*...")
-
-                            # 1. Fetch children from Drive
-                            token = user['google_token']['refresh_token']
-                            items = list_drive_folder(token, folder_id)
-
-                            if not items:
-                                send_message(sender, "⚠️ This folder is empty.")
-                            else:
-                                # 2. Build New Menu
-                                menu_items = []
-                                for item in items:
-                                    is_folder = "folder" in item['mimeType']
-
-                                    # If it's a folder, the ID triggers 'BROWSE' again (Recursion!)
-                                    # If it's a file, the ID triggers 'FILE' (Download)
-                                    action_prefix = "BROWSE:" if is_folder else "FILE:"
-                                    icon = "📂" if is_folder else "📄"
-
-                                    menu_items.append({
-                                        "id": f"{action_prefix}{item['id']}",
-                                        "title": item['name'],
-                                        "description": "Folder" if is_folder else "File"
-                                    })
-
-                                # 3. Send the New List
-                                send_interactive_list(
-                                    to_number=sender,
-                                    body_text=f"📂 Contents of *{selected_title}*:",
-                                    button_text="Open",
-                                    items=menu_items
-                                )
-
-                        # ====================================================
-                        # 🟢 CASE 2: USER SELECTED A FILE (Download)
-                        # ====================================================
-                        elif selected_id.startswith("FILE:"):
-                            drive_file_id = selected_id.replace("FILE:", "")
-                            send_message(sender, f"⬇️ Fetching *{selected_title}*...")
-                            trigger_file_send(sender, drive_file_id, selected_title)
-
-                        # ====================================================
-                        # 🟢 CASE 3: OPEN LINK (Fallback)
-                        # ====================================================
-                        elif selected_id == "CMD:FOLDER_LINK":
-                            root_id = user.get('root_folder_id')
-                            link = f"https://drive.google.com/drive/u/0/folders/{root_id}"
-                            send_message(sender, f"🔗 *Drive Link:*\n{link}")
+    handled = 0
+    for entry in data.get("entry") or []:
+        for change in entry.get("changes") or []:
+            value = change.get("value") or {}
+            for message in value.get("messages") or []:
+                await _handle_single_whatsapp_message(message, background_tasks)
+                handled += 1
+    return Response("OK" if handled else "Ignored", status_code=200)
 
 
-            # ---------------------------------------------------------
-            # 3. HANDLE FILE UPLOAD (Your existing logic)
-            # ---------------------------------------------------------
-            elif msg_type in ['document', 'image']:
-
-                print("Document")
-                media_id = None
-                filename = f"upload_{sender}"
-
-                if msg_type == 'document':
-                    media_id = msg['document']['id']
-                    filename = msg['document'].get('filename', f"doc_{sender}.pdf")
-                elif msg_type == 'image':
-                    media_id = msg['image']['id']
-                    filename = f"img_{sender}.jpg"
-
-                if media_id:
-                    send_message(sender, "🤖 Analyzing document...")
-                    background_tasks.add_task(process_file_background, media_id, sender, filename)
-
-    except Exception as e:
-        print(f"❌ Webhook Error: {e}")
-        import traceback
-        traceback.print_exc()
-
-    return Response(content="OK", status_code=200)
-
-
-
-
-
-# --- VERIFY WEBHOOK ---
 @app.get("/webhook")
 async def verify_webhook(request: Request):
-    # This verifies your URL with Meta
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
-
     if mode == "subscribe" and token == VERIFY_TOKEN:
         return Response(content=challenge, status_code=200)
-
-    return Response(content="Forbidden", status_code=403)
+    return Response("Forbidden", status_code=403)

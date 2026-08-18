@@ -1,0 +1,49 @@
+# Secrets and local credentials
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/credentials*.json
+**/token*.json
+
+# Python
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# JavaScript
+**/node_modules/
+**/dist/
+**/dist-ssr/
+
+# ML and package caches
+.cache/
+**/.cache/
+.huggingface/
+**/.huggingface/
+**/models--*/
+
+# Local tooling and generated output
+.idea/
+.vscode/
+*.log
+*.tmp
+*.temp
+*.bak
+bo.txt
+be.txt
+k.json
+ports.txt
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

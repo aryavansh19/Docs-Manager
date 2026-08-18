@@ -1,71 +1,106 @@
-import React, { useEffect } from "react";
-import Footer from "../components/Footer";
-import { motion } from "framer-motion";
+import React from "react";
+import LegalPage from "../components/LegalPage";
+
+const SECTIONS = [
+    {
+        title: "Introduction",
+        body: (
+            <p>
+                DocsFlow ("we", "our", "us") provides intelligent document organization.
+                This policy explains what we collect, why we collect it, and how we
+                safeguard it when you use our website and WhatsApp service.
+            </p>
+        ),
+    },
+    {
+        title: "Information we collect",
+        body: (
+            <>
+                <p>We collect only what the service needs to function:</p>
+                <ul className="ml-1 space-y-2">
+                    {[
+                        "Your name and email address, from Google sign-in.",
+                        "Your WhatsApp number, so we can match incoming messages to your account.",
+                        "A Google Drive authorization token, so we can create folders and upload files on your behalf.",
+                        "An index of your filed documents: file names, folder locations and tags.",
+                    ].map((item) => (
+                        <li key={item} className="flex gap-2.5">
+                            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-flame" />
+                            <span>{item}</span>
+                        </li>
+                    ))}
+                </ul>
+            </>
+        ),
+    },
+    {
+        title: "How we use it",
+        body: (
+            <>
+                <p>Your information is used to:</p>
+                <ul className="ml-1 space-y-2">
+                    {[
+                        "Classify documents you forward and file them in your Drive.",
+                        "Power search, so you can ask for a document in plain language.",
+                        "Send you service notices and respond to support requests.",
+                    ].map((item) => (
+                        <li key={item} className="flex gap-2.5">
+                            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cobalt" />
+                            <span>{item}</span>
+                        </li>
+                    ))}
+                </ul>
+                <p>We do not sell your data, and we do not use your documents to train models.</p>
+            </>
+        ),
+    },
+    {
+        title: "Document retention",
+        body: (
+            <p>
+                Documents are held in memory only for as long as it takes to classify them
+                and upload them to your Google Drive. We do not keep copies of your files.
+                What we retain is the searchable index described above, which points at
+                files that live in your own Drive.
+            </p>
+        ),
+    },
+    {
+        title: "Your control",
+        body: (
+            <p>
+                You can revoke DocsFlow's Google Drive access at any time from your Google
+                Account permissions page. Filing stops immediately, and every document
+                already filed remains in your Drive, because it was always yours. Contact
+                us to request deletion of your account and index.
+            </p>
+        ),
+    },
+    {
+        title: "Contact",
+        body: (
+            <p>
+                Questions about this policy? Email{" "}
+                <a
+                    href="mailto:support@docsflow.com"
+                    className="link-wipe font-bold text-ink"
+                >
+                    support@docsflow.com
+                </a>
+                .
+            </p>
+        ),
+    },
+];
 
 export default function PrivacyPolicy() {
-    useEffect(() => {
-        window.scrollTo(0, 0);
-    }, []);
-
     return (
-        <div className="min-h-screen text-white font-sans overflow-x-hidden selection:bg-blue-500/30 relative pt-24">
-            {/* Background */}
-            <div className="fixed inset-0 pointer-events-none" style={{ background: 'linear-gradient(135deg, #030303 0%, #050510 50%, #030303 100%)', zIndex: -1 }}>
-                <div className="absolute top-[5%] left-[-5%] w-[800px] h-[800px] bg-gradient-to-br from-blue-600/20 via-cyan-500/10 to-transparent rounded-full blur-[180px]" />
-                <div className="absolute bottom-[10%] right-[-10%] w-[500px] h-[500px] bg-gradient-to-tr from-purple-500/10 to-transparent rounded-full blur-[140px]" />
-                <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`, backgroundSize: '80px 80px' }} />
-            </div>
-
-            <div className="container mx-auto px-6 py-12 max-w-4xl relative z-10">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mb-12"
-                >
-                    <span className="text-blue-400 font-medium tracking-wide uppercase text-sm">Legal</span>
-                    <h1 className="text-4xl md:text-5xl font-bold mt-3 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">Privacy Policy</h1>
-                    <p className="text-white/50 text-lg">Last updated: {new Date().toLocaleDateString()}</p>
-                </motion.div>
-
-                <div className="space-y-12 text-white/80 leading-relaxed">
-                    <Section title="1. Introduction">
-                        <p>Welcome to DocsFlow ("we," "our," or "us"). We comprise a team dedicated to providing intelligent document organization services. This Privacy Policy explains how we collect, use, disclosure, and safeguard your information when you use our website and services.</p>
-                    </Section>
-
-                    <Section title="2. Information We Collect">
-                        <p>We collect information that you provide directly to us when you register for an account, such as your name, email address, and Google Drive access permissions. We also collect data regarding your usage of the service to improve our offerings.</p>
-                    </Section>
-
-                    <Section title="3. How We Use Your Information">
-                        <p>We use the information we collect to:</p>
-                        <ul className="list-disc pl-6 space-y-2 mt-4 text-white/60">
-                            <li>Provide, maintain, and improve our services.</li>
-                            <li>Process your document organization requests.</li>
-                            <li>Send you technical notices and support messages.</li>
-                            <li>Respond to your comments and questions.</li>
-                        </ul>
-                    </Section>
-
-                    <Section title="4. Data Security">
-                        <p>We implement appropriate technical and organizational measures to protect your personal information. Your documents are processed in memory and are not permanently stored on our servers.</p>
-                    </Section>
-
-                    <Section title="5. Contact Us">
-                        <p>If you have any questions about this Privacy Policy, please contact us at support@docsflow.com.</p>
-                    </Section>
-                </div>
-            </div>
-
-            <Footer />
-        </div>
+        <LegalPage
+            title="Privacy Policy"
+            updated={new Date().toLocaleDateString()}
+            accent="bg-lime"
+            intro="Short version: your documents pass through us and land in your own Google Drive. We keep the index that makes search work, never the files themselves."
+            sections={SECTIONS}
+        />
     );
 }
-
-const Section = ({ title, children }) => (
-    <section className="border-b border-white/5 pb-8">
-        <h2 className="text-2xl font-semibold mb-4 text-white/90">{title}</h2>
-        <div className="text-white/60 space-y-4">
-            {children}
-        </div>
-    </section>
-);

@@ -1,6 +1,6 @@
 import os
 import requests
-from flask.cli import load_dotenv
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -51,5 +51,10 @@ def send_interactive_list(to_number, body_text, button_text, items):
         }
     }
 
-    r = requests.post(url, headers=headers, json=data)
-    return r.json()
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=(10, 60))
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        print(f"WhatsApp interactive list failed: {exc}")
+        return {"error": "send_failed"}

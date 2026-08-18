@@ -65,7 +65,7 @@ def build_drive_structure(refresh_token, syllabus_list, folder_name_suffix="User
     service = get_drive_service(refresh_token)
 
     # 2. Create Root Folder
-    root_name = f"SmartDoc AI - {folder_name_suffix}"
+    root_name = f"DocsFlow - {folder_name_suffix}"
     root_id = create_folder(service, root_name)
 
     folder_map = {}

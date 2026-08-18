@@ -1,449 +1,888 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, ArrowUpRight, FileText, MessageSquare, FolderTree, Search, Folder, CheckCircle, Shield, Lock, Send, Sparkles, UploadCloud, Github, Zap, Cloud, Rocket, Wrench, Leaf } from "lucide-react";
+import {
+    ArrowRight,
+    ArrowUpRight,
+    FileText,
+    MessageSquare,
+    Search,
+    Send,
+    Sparkles,
+    UploadCloud,
+    ShieldCheck,
+    FolderTree,
+    Folder,
+    Check,
+    Plus,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import Footer from "../components/Footer";
+import {
+    Reveal,
+    SplitWords,
+    Parallax,
+    VelocityMarquee,
+    StickyStack,
+    HorizontalScroll,
+    Magnetic,
+    CountUp,
+    ScrollScale,
+} from "../lib/motion";
 
-// --- CAROUSEL SLIDE DATA ---
-const carouselSlides = [
-    { userMsg: "Find my OS notes from semester 3", botMsg: "Here you go! Found in /University/Sem3/", botFile: "OS_Unit1_Notes.pdf" },
-    { userMsg: "Where is my Adhaar card?", botMsg: "Located at /Personal/Identity/ ✓", botFile: null },
-    { userMsg: "Send my internship offer letter", botMsg: "Found in /Career/Internship/", botFile: "Google_Offer_Letter.pdf" },
-    { userMsg: "Get all uber receipts", botMsg: "Found 7 receipts in /Finance/Uber/ ✓", botFile: null },
-    { userMsg: "Show my latest resume", botMsg: "Here's your latest version!", botFile: "Resume_2024_v3.pdf" }
+/* ---------------------------------------------------------------- DATA --- */
+
+const CHAT_SLIDES = [
+    {
+        userMsg: "Find my OS notes from semester 3",
+        botMsg: "Found it — /University/Sem3/",
+        botFile: "OS_Unit1_Notes.pdf",
+    },
+    {
+        userMsg: "Where is my Aadhaar card?",
+        botMsg: "Filed under /Personal/Identity/",
+        botFile: null,
+    },
+    {
+        userMsg: "Send my internship offer letter",
+        botMsg: "Here it is, from /Career/Internship/",
+        botFile: "Offer_Letter.pdf",
+    },
+    {
+        userMsg: "Get all my Uber receipts",
+        botMsg: "7 receipts in /Finance/Uber/",
+        botFile: null,
+    },
+    {
+        userMsg: "Show my latest resume",
+        botMsg: "Latest version coming up",
+        botFile: "Resume_v3.pdf",
+    },
 ];
 
-// --- COMPANY LOGOS ---
-const companyLogos = [
-    { name: "Cloud", icon: Cloud },
-    { name: "Invert", icon: Sparkles },
-    { name: "Orbitc", icon: Rocket },
-    { name: "Leafe", icon: Leaf }
+const FEATURES = [
+    {
+        tag: "01 / Syllabus intelligence",
+        title: "Upload a syllabus. Get a whole folder tree.",
+        body: "Drop in your course PDF. DocsFlow reads the subjects and units, then builds the matching hierarchy in your Drive. You never create a folder by hand again.",
+        icon: FolderTree,
+        bg: "bg-lime",
+        ink: "text-ink",
+        bullets: ["Reads PDFs and images", "Understands units and modules", "Editable before it commits"],
+    },
+    {
+        tag: "02 / WhatsApp native",
+        title: "The interface is a chat you already use.",
+        body: "No new app, no new login, no dashboard to learn. Forward a document to the bot the same way you forward it to a friend, and it lands in the right place.",
+        icon: MessageSquare,
+        bg: "bg-cobalt",
+        ink: "text-paper",
+        bullets: ["Works on any phone", "Nothing to install", "Replies in seconds"],
+    },
+    {
+        tag: "03 / Ask, don't dig",
+        title: "Search in plain language, not folder paths.",
+        body: "Ask for “last month's rent receipt” or “vaccine certificate”. DocsFlow searches what's inside your files, not just their names, and hands back the link.",
+        icon: Search,
+        bg: "bg-magenta",
+        ink: "text-paper",
+        bullets: ["Content-aware search", "Direct Drive links", "No folder spelunking"],
+    },
+    {
+        tag: "04 / Yours, not ours",
+        title: "Files pass through. They never stay.",
+        body: "Documents are processed in memory and written straight to your own Google Drive. We keep the index that makes search work — never the file itself.",
+        icon: ShieldCheck,
+        bg: "bg-sun",
+        ink: "text-ink",
+        bullets: ["Zero file retention", "Your Drive, your ownership", "Revoke access anytime"],
+    },
 ];
 
-// --- FAQ DATA ---
-const faqData = [
-    { question: "How do I get started with DocFlow?", answer: "Simply sign up, connect your Google Drive, and add our WhatsApp bot to your contacts. Then just forward any document to the bot!" },
-    { question: "What are the key features of DocFlow?", answer: "AI-powered document organization, WhatsApp integration, automatic folder structure, smart search, and privacy-first architecture." },
-    { question: "Is my data secure and private?", answer: "Absolutely. We never store your documents. Files go directly from WhatsApp to your personal Google Drive with end-to-end encryption." },
-    { question: "Can I customize the folder organization?", answer: "Yes! You can upload a syllabus or create custom rules. Our AI learns your preferences and organizes files accordingly." }
+const STEPS = [
+    {
+        num: "01",
+        title: "Forward",
+        desc: "Send any document to the DocsFlow bot on WhatsApp — a screenshot, a PDF, a phone scan. Anything at all.",
+        icon: Send,
+        bg: "bg-cobalt",
+        tint: "bg-cobalt-soft",
+        exampleLabel: "You send",
+        example: "IMG_2481.jpg",
+    },
+    {
+        num: "02",
+        title: "Understand",
+        desc: "It gets read and classified. DocsFlow works out what the document actually is, not just what it is called.",
+        icon: Sparkles,
+        bg: "bg-violet",
+        tint: "bg-violet-soft",
+        exampleLabel: "Detected",
+        example: "Electricity bill · March",
+    },
+    {
+        num: "03",
+        title: "Rename",
+        desc: "A meaningless camera filename gets rewritten into something you could actually search for months later.",
+        icon: FileText,
+        bg: "bg-flame",
+        tint: "bg-flame-soft",
+        exampleLabel: "Renamed to",
+        example: "Electricity_Bill_March.jpg",
+    },
+    {
+        num: "04",
+        title: "File",
+        desc: "It lands in the right folder in your own Drive, indexed so you can ask the bot for it by name.",
+        icon: UploadCloud,
+        bg: "bg-teal",
+        tint: "bg-teal-soft",
+        exampleLabel: "Saved to",
+        example: "/Personal/Bills/2026/",
+    },
 ];
 
-// --- FLOATING ICON BADGE ---
-const FloatingIcon = ({ icon: Icon, className, delay = 0 }) => (
-    <motion.div
-        initial={{ opacity: 0, scale: 0.8, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ delay, duration: 0.6 }}
-        className={`absolute ${className}`}
-        style={{ zIndex: 5 }}
-    >
-        <motion.div
-            animate={{ y: [-8, 8, -8], rotate: [-3, 3, -3] }}
-            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-            className="w-14 h-14 lg:w-16 lg:h-16 bg-gradient-to-br from-[#1a1a1a] to-[#0a0a0a] rounded-2xl flex items-center justify-center border border-white/10"
-            style={{ boxShadow: '0 25px 50px rgba(0,0,0,0.6)' }}
+// Sample output of the syllabus parser, shown in the "Setup, once" section.
+const SYLLABUS_TREE = [
+    {
+        name: "DBMS",
+        color: "bg-cobalt-soft",
+        expanded: true,
+        units: ["Normalisation", "Transactions", "Indexing"],
+    },
+    { name: "Operating Systems", color: "bg-lime-soft", units: [1, 2, 3, 4] },
+    { name: "Computer Networks", color: "bg-magenta-soft", units: [1, 2, 3, 4, 5] },
+    { name: "Data Structures Lab", color: "bg-sun-soft", units: [1, 2, 3] },
+];
+
+const STATS = [
+    { to: 100, suffix: "%", label: "of files land in your own Drive" },
+    { to: 0, suffix: "", label: "documents kept on our servers" },
+    { to: 3, suffix: "", label: "steps from chat to filed" },
+    { to: 24, suffix: "/7", label: "the bot is awake and listening" },
+];
+
+const FAQS = [
+    {
+        q: "How do I get started?",
+        a: "Sign up with your WhatsApp number, connect Google Drive once, then message the bot. That is the whole setup — usually under two minutes.",
+    },
+    {
+        q: "Do you store my documents?",
+        a: "No. Files are held in memory only long enough to classify and upload them to your Drive. We store the searchable index and the Drive file ID, never the document.",
+    },
+    {
+        q: "Can I control how folders are organised?",
+        a: "Yes. Upload a syllabus to generate a structure automatically, or add subjects and units by hand during setup. You can review and edit everything before it is created.",
+    },
+    {
+        q: "What file types work?",
+        a: "PDFs, images and screenshots are the sweet spot, since those are what people actually forward on WhatsApp. Documents are read for content, not just filename.",
+    },
+    {
+        q: "What if I revoke Drive access?",
+        a: "Filing stops immediately and nothing new is written. Your existing files stay exactly where they are in your Drive, because they were always yours.",
+    },
+];
+
+/* ------------------------------------------------------------ PIECES ----- */
+
+function Sticker({ children, className = "", rotate = -3 }) {
+    return (
+        <span
+            style={{ rotate: `${rotate}deg` }}
+            className={`inline-block rounded-full border-2 border-ink px-4 py-1.5 font-mono text-[11px] font-bold uppercase tracking-widest shadow-brut-xs ${className}`}
         >
-            <Icon size={26} className="text-white/80" />
-        </motion.div>
-    </motion.div>
-);
+            {children}
+        </span>
+    );
+}
 
-// --- FAQ ITEM ---
-// --- FAQ ITEM ---
-const FAQItem = ({ question, answer, isOpen, onClick }) => (
-    <div className="w-full">
-        <motion.button
-            onClick={onClick}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className={`w-full flex items-center justify-between p-6 bg-gradient-to-br from-white/5 to-white/[0.02] hover:from-white/10 hover:to-white/5 border border-white/5 ${isOpen ? 'rounded-t-2xl' : 'rounded-2xl'} transition-all group backdrop-blur-sm`}
-        >
-            <span className="text-lg font-medium text-white text-left">{question}</span>
-            <div className={`w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-white/10 transition-all flex-shrink-0 ml-4 ${isOpen ? 'rotate-180 bg-white/10' : ''}`}>
-                {isOpen ? <ArrowUpRight size={18} className="text-white" /> : <ArrowUpRight size={18} className="text-white/60" />}
-            </div>
-        </motion.button>
-        <AnimatePresence>
-            {isOpen && (
-                <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3, ease: "easeInOut" }}
-                    className="overflow-hidden bg-white/5 border-x border-b border-white/5 rounded-b-2xl"
-                >
-                    <div className="p-6 pt-0 text-white/50 text-base leading-relaxed">
-                        {answer}
-                    </div>
-                </motion.div>
+function SectionHeading({ eyebrow, title, lead, align = "left" }) {
+    const alignment = align === "center" ? "text-center mx-auto items-center" : "text-left";
+    return (
+        <div className={`flex max-w-3xl flex-col gap-5 ${alignment}`}>
+            <Reveal from="up">
+                <span className="eyebrow inline-flex items-center gap-2 text-flame">
+                    <span className="h-2 w-2 rounded-full bg-flame" />
+                    {eyebrow}
+                </span>
+            </Reveal>
+            <SplitWords
+                as="h2"
+                text={title}
+                className="font-display text-4xl font-extrabold leading-[0.95] tracking-tight sm:text-5xl lg:text-6xl"
+            />
+            {lead && (
+                <Reveal from="up" delay={0.1}>
+                    <p className="max-w-xl text-lg leading-relaxed text-ink-70">{lead}</p>
+                </Reveal>
             )}
-        </AnimatePresence>
-    </div>
-);
+        </div>
+    );
+}
 
-// --- WHATSAPP CHAT CARD ---
-const WhatsAppChatCard = ({ userMsg, botMsg, botFile }) => (
-    <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.5 }}
-        className="w-full h-full flex flex-col"
-    >
-        <div className="flex-1 p-4 sm:p-6 space-y-4 overflow-y-auto" style={{
-            backgroundColor: '#0D1418',
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
-        }}>
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="flex justify-end">
-                <div className="bg-[#005c4b] px-4 py-3 rounded-lg rounded-tr-sm max-w-[75%] shadow">
-                    <p className="text-sm sm:text-base text-white">{userMsg}</p>
-                    <div className="text-[10px] text-white/50 text-right mt-1 flex items-center justify-end gap-1">
-                        10:42 AM <CheckCircle size={10} className="text-blue-300" />
-                    </div>
+/** WhatsApp-style conversation, restyled to the paper/ink system. */
+function ChatBubbles({ userMsg, botMsg, botFile }) {
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35 }}
+            className="flex h-full flex-col gap-4 p-5 sm:p-6"
+        >
+            <motion.div
+                initial={{ opacity: 0, x: 24, scale: 0.96 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                transition={{ delay: 0.1, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                className="flex justify-end"
+            >
+                <div className="max-w-[78%] rounded-2xl rounded-tr-md border-2 border-ink bg-lime px-4 py-3 shadow-brut-xs">
+                    <p className="text-[15px] font-semibold leading-snug text-ink">
+                        {userMsg}
+                    </p>
+                    <span className="mt-1 flex items-center justify-end gap-1 font-mono text-[10px] text-ink/50">
+                        10:42 <Check size={11} strokeWidth={3} />
+                    </span>
                 </div>
             </motion.div>
-            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }} className="flex justify-start">
-                <div className="bg-[#1f2c34] px-4 py-3 rounded-lg rounded-tl-sm max-w-[80%] shadow border-l-2 border-green-500">
+
+            <motion.div
+                initial={{ opacity: 0, x: -24, scale: 0.96 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                transition={{ delay: 0.34, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                className="flex justify-start"
+            >
+                <div className="max-w-[85%] rounded-2xl rounded-tl-md border-2 border-ink bg-paper px-4 py-3 shadow-brut-xs">
                     {botFile && (
-                        <div className="flex items-center gap-3 bg-black/20 rounded-lg p-2 sm:p-3 mb-2 border border-white/5">
-                            <div className="w-8 h-10 sm:w-10 sm:h-12 bg-red-500/20 rounded flex items-center justify-center">
-                                <FileText size={20} className="text-red-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="text-xs sm:text-sm text-white font-medium truncate">{botFile}</div>
-                                <div className="text-[10px] text-white/40">PDF • 2.4 MB</div>
-                            </div>
+                        <div className="mb-2.5 flex items-center gap-3 rounded-xl border-2 border-ink bg-flame-soft p-2.5">
+                            <span className="grid h-10 w-9 shrink-0 place-items-center rounded-md border-2 border-ink bg-flame text-paper">
+                                <FileText size={16} />
+                            </span>
+                            <span className="min-w-0">
+                                <span className="block truncate font-mono text-xs font-bold text-ink">
+                                    {botFile}
+                                </span>
+                                <span className="block font-mono text-[10px] text-ink-45">
+                                    PDF · 2.4 MB
+                                </span>
+                            </span>
                         </div>
                     )}
-                    <p className="text-sm sm:text-base text-white/90">{botMsg}</p>
-                    <div className="text-[10px] text-white/40 mt-1">10:42 AM</div>
+                    <p className="text-[15px] leading-snug text-ink">{botMsg}</p>
+                    <span className="mt-1 block font-mono text-[10px] text-ink-45">10:42</span>
                 </div>
             </motion.div>
-        </div>
-    </motion.div>
-);
+        </motion.div>
+    );
+}
 
-// --- CAROUSEL ---
-const ChatCarousel = () => {
-    const [current, setCurrent] = useState(0);
+function ChatWindow() {
+    const [index, setIndex] = useState(0);
+
     useEffect(() => {
-        const timer = setInterval(() => setCurrent((prev) => (prev + 1) % carouselSlides.length), 5000);
+        const timer = setInterval(
+            () => setIndex((prev) => (prev + 1) % CHAT_SLIDES.length),
+            4200
+        );
         return () => clearInterval(timer);
     }, []);
 
     return (
-        <div className="relative w-full h-full">
-            <AnimatePresence mode="wait">
-                <WhatsAppChatCard key={current} {...carouselSlides[current]} />
-            </AnimatePresence>
-            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 flex justify-center gap-2">
-                {carouselSlides.map((_, i) => (
-                    <button key={i} onClick={() => setCurrent(i)} className={`h-1.5 rounded-full transition-all ${i === current ? 'bg-white w-6' : 'bg-white/20 w-1.5'}`} />
+        <div className="overflow-hidden rounded-3xl border-2 border-ink bg-paper shadow-brut-xl">
+            {/* Window chrome */}
+            <div className="flex items-center gap-3 border-b-2 border-ink bg-paper-2 px-4 py-3">
+                <span className="flex gap-1.5" aria-hidden="true">
+                    <span className="h-3 w-3 rounded-full border-2 border-ink bg-flame" />
+                    <span className="h-3 w-3 rounded-full border-2 border-ink bg-sun" />
+                    <span className="h-3 w-3 rounded-full border-2 border-ink bg-teal" />
+                </span>
+                <span className="ml-2 flex items-center gap-2 rounded-full border-2 border-ink bg-paper px-3 py-1 font-mono text-[10px] font-bold text-ink-70">
+                    <ShieldCheck size={11} className="text-teal" />
+                    docsflow bot
+                </span>
+                <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-ink-45">
+                    <span className="h-2 w-2 animate-blink rounded-full bg-teal" />
+                    online
+                </span>
+            </div>
+
+            <div className="relative h-[330px] bg-paper-2 bg-dots sm:h-[380px]">
+                <AnimatePresence mode="wait">
+                    <ChatBubbles key={index} {...CHAT_SLIDES[index]} />
+                </AnimatePresence>
+            </div>
+
+            {/* Slide selector */}
+            <div className="flex items-center gap-2 border-t-2 border-ink bg-paper px-5 py-3.5">
+                {CHAT_SLIDES.map((slide, i) => (
+                    <button
+                        key={slide.userMsg}
+                        type="button"
+                        onClick={() => setIndex(i)}
+                        aria-label={`Show example: ${slide.userMsg}`}
+                        aria-current={i === index}
+                        className={`h-2.5 rounded-full border-2 border-ink transition-all ${
+                            i === index ? "w-8 bg-flame" : "w-2.5 bg-paper hover:bg-lime"
+                        }`}
+                    />
                 ))}
+                <span className="ml-auto font-mono text-[10px] font-bold uppercase tracking-widest text-ink-45">
+                    live demo
+                </span>
             </div>
         </div>
     );
-};
+}
 
-// --- FEATURE CARD (UPDATED WITH GLASS EFFECT) ---
-const FeatureCard = ({ title, description, icon: Icon, link = "#", className, tall }) => (
-    <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        className={`group bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-md border border-white/10 rounded-3xl p-8 flex flex-col hover:border-white/20 transition-all hover:bg-white/[0.08] hover:shadow-2xl hover:shadow-purple-500/5 ${className}`}
-    >
-        {Icon && (
-            <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform text-white border border-white/5 shadow-inner">
-                <Icon size={24} />
+function FeatureCard({ feature }) {
+    const Icon = feature.icon;
+    return (
+        <article
+            className={`card-brut ${feature.bg} ${feature.ink} overflow-hidden p-8 shadow-brut-lg sm:p-10`}
+        >
+            <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr] lg:items-start">
+                <div>
+                    <span className="mb-5 inline-block rounded-full border-2 border-ink bg-paper px-3.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-ink">
+                        {feature.tag}
+                    </span>
+                    <h3
+                        className={`mb-4 font-display text-3xl font-extrabold leading-[1.02] tracking-tight sm:text-4xl ${feature.ink}`}
+                    >
+                        {feature.title}
+                    </h3>
+                    <p className="max-w-lg text-[17px] leading-relaxed opacity-80">
+                        {feature.body}
+                    </p>
+                </div>
+
+                <div className="flex flex-col gap-4">
+                    <span className="grid h-16 w-16 place-items-center rounded-2xl border-2 border-ink bg-paper text-ink shadow-brut-xs">
+                        <Icon size={28} strokeWidth={2} />
+                    </span>
+                    <ul className="space-y-2.5">
+                        {feature.bullets.map((bullet) => (
+                            <li key={bullet} className="flex items-start gap-2.5">
+                                <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 border-ink bg-paper text-ink">
+                                    <Check size={11} strokeWidth={3.5} />
+                                </span>
+                                <span className="text-sm font-semibold">{bullet}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
             </div>
-        )}
-        <h3 className="text-2xl font-bold text-white mb-4">{title}</h3>
-        <p className="text-white/60 leading-relaxed mb-6 flex-grow">{description}</p>
-        <Link to={link} className="inline-flex items-center gap-2 text-sm font-medium text-white hover:text-blue-400 transition-colors mt-auto">
-            Explore More <ArrowUpRight size={14} />
-        </Link>
-    </motion.div>
-);
+        </article>
+    );
+}
 
-// --- WORKFLOW CARD (UPDATED WITH GLASS EFFECT) ---
-const WorkflowCard = ({ num, title, desc, icon: Icon, color }) => (
-    <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        className="bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-md border border-white/10 rounded-3xl p-8 relative overflow-hidden group hover:border-white/20 transition-all hover:bg-white/[0.08] hover:shadow-2xl hover:shadow-blue-500/5"
-    >
-        {/* Step Number Background */}
-        <div className="absolute top-0 right-0 p-6 opacity-5 font-bold text-6xl text-white select-none">{num}</div>
-
-        <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${color} flex items-center justify-center mb-6 shadow-lg`}>
-            <Icon size={24} className="text-white" />
-        </div>
-
-        <h3 className="text-xl font-bold text-white mb-3">{title}</h3>
-        <p className="text-white/60 leading-relaxed text-sm">{desc}</p>
-
-        <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-transparent via-white/10 to-transparent w-full opacity-50" />
-    </motion.div>
-);
-
-// --- MAIN PAGE ---
-export default function Home() {
-    const [openFAQ, setOpenFAQ] = useState(null);
+function FaqRow({ faq, isOpen, onToggle, index }) {
+    const panelId = `faq-panel-${index}`;
+    const buttonId = `faq-button-${index}`;
 
     return (
-        <div className="min-h-screen text-white font-sans overflow-x-hidden selection:bg-blue-500/30 relative">
+        <div
+            className={`overflow-hidden rounded-2xl border-2 border-ink transition-colors ${
+                isOpen ? "bg-lime shadow-brut" : "bg-paper shadow-brut-xs"
+            }`}
+        >
+            <h3>
+                <button
+                    id={buttonId}
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={isOpen}
+                    aria-controls={panelId}
+                    className="flex w-full items-center justify-between gap-4 p-5 text-left sm:p-6"
+                >
+                    <span className="font-display text-lg font-extrabold tracking-tight sm:text-xl">
+                        {faq.q}
+                    </span>
+                    <span
+                        className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-ink transition-transform duration-300 ${
+                            isOpen ? "rotate-45 bg-ink text-paper" : "bg-paper text-ink"
+                        }`}
+                        aria-hidden="true"
+                    >
+                        <Plus size={16} strokeWidth={3} />
+                    </span>
+                </button>
+            </h3>
 
-            {/* === CONSISTENT BACKGROUND === */}
-            <div className="fixed inset-0 pointer-events-none" style={{ background: 'linear-gradient(135deg, #030303 0%, #050510 50%, #030303 100%)', zIndex: -1 }}>
-                <div className="absolute top-[5%] left-[-5%] w-[800px] h-[800px] bg-gradient-to-br from-blue-600/20 via-cyan-500/10 to-transparent rounded-full blur-[180px]" />
-                <div className="absolute top-[40%] right-[-10%] w-[700px] h-[700px] bg-gradient-to-tl from-purple-600/15 via-pink-500/8 to-transparent rounded-full blur-[160px]" />
-                <div className="absolute bottom-[10%] left-[20%] w-[500px] h-[500px] bg-gradient-to-tr from-blue-500/10 to-transparent rounded-full blur-[140px]" />
-                <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`, backgroundSize: '80px 80px' }} />
-                <div className="absolute inset-0 opacity-[0.4]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`, mixBlendMode: 'overlay' }} />
+            <AnimatePresence initial={false}>
+                {isOpen && (
+                    <motion.div
+                        id={panelId}
+                        role="region"
+                        aria-labelledby={buttonId}
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden"
+                    >
+                        <p className="border-t-2 border-ink/15 px-5 py-5 text-[15px] leading-relaxed text-ink/80 sm:px-6">
+                            {faq.a}
+                        </p>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
+/* -------------------------------------------------------------- PAGE ----- */
+
+export default function Home() {
+    const [openFaq, setOpenFaq] = useState(0);
+
+    return (
+        <div className="relative overflow-x-clip bg-paper text-ink">
+            {/* ======================= HERO ======================= */}
+            <section className="relative overflow-hidden border-b-2 border-ink bg-paper pb-20 pt-32 sm:pt-36">
+                <div className="pointer-events-none absolute inset-0 bg-graph opacity-70" aria-hidden="true" />
+
+                {/* Flat colour shapes instead of blurred orbs */}
+                <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+                    <Parallax distance={60} className="absolute -left-24 top-24">
+                        <div className="h-56 w-56 rounded-full border-2 border-ink bg-lime opacity-70" />
+                    </Parallax>
+                    <Parallax distance={-80} className="absolute -right-16 top-8">
+                        <div className="h-40 w-40 rotate-12 rounded-3xl border-2 border-ink bg-magenta-soft" />
+                    </Parallax>
+                    <Parallax distance={50} className="absolute bottom-10 right-1/4">
+                        <div className="h-24 w-24 rounded-full border-2 border-ink bg-cobalt-soft" />
+                    </Parallax>
+                </div>
+
+                <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-6 lg:grid-cols-[1.05fr_0.95fr]">
+                    <div>
+                        <motion.div
+                            initial={{ opacity: 0, y: 16 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.6 }}
+                            className="mb-7 flex flex-wrap items-center gap-3"
+                        >
+                            <Sticker className="bg-lime" rotate={-2}>
+                                WhatsApp → AI → Drive
+                            </Sticker>
+                            <Sticker className="bg-paper" rotate={2}>
+                                No app to install
+                            </Sticker>
+                        </motion.div>
+
+                        <h1 className="mb-6 font-display text-[3.25rem] font-extrabold leading-[0.9] tracking-tight sm:text-7xl lg:text-[5.5rem]">
+                            <SplitWords text="Forward it." className="block" delay={0.05} />
+                            <SplitWords text="Forget it." className="block text-flame" delay={0.16} />
+                            <span className="block">
+                                <SplitWords text="It's" className="inline" delay={0.28} />{" "}
+                                <span className="relative inline-block">
+                                    <SplitWords text="filed." className="relative z-10 inline" delay={0.34} />
+                                    <motion.span
+                                        aria-hidden="true"
+                                        initial={{ scaleX: 0 }}
+                                        animate={{ scaleX: 1 }}
+                                        transition={{ delay: 0.85, duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                                        className="absolute inset-x-[-0.1em] bottom-[0.12em] z-0 h-[0.28em] origin-left bg-lime"
+                                    />
+                                </span>
+                            </span>
+                        </h1>
+
+                        <Reveal from="up" delay={0.5}>
+                            <p className="mb-9 max-w-lg text-lg leading-relaxed text-ink-70 sm:text-xl">
+                                Send any document to WhatsApp. DocsFlow reads it, gives it a
+                                real name, and drops it in exactly the right Google Drive
+                                folder.
+                            </p>
+                        </Reveal>
+
+                        <Reveal from="up" delay={0.6}>
+                            <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center">
+                                <Magnetic strength={0.22}>
+                                    <Link
+                                        to="/auth"
+                                        className="group flex items-center justify-center gap-2.5 rounded-full border-2 border-ink bg-ink px-8 py-4 text-base font-bold text-paper shadow-brut transition-colors hover:bg-flame"
+                                    >
+                                        Start organizing
+                                        <ArrowRight
+                                            size={18}
+                                            className="transition-transform group-hover:translate-x-1"
+                                        />
+                                    </Link>
+                                </Magnetic>
+                                <Link
+                                    to="/login"
+                                    className="flex items-center justify-center gap-2 rounded-full border-2 border-ink bg-paper px-8 py-4 text-base font-bold text-ink transition-all hover:-translate-y-0.5 hover:bg-lime hover:shadow-brut-xs"
+                                >
+                                    Log in
+                                </Link>
+                            </div>
+                        </Reveal>
+
+                        <Reveal from="up" delay={0.72}>
+                            <ul className="mt-9 flex flex-wrap gap-x-6 gap-y-2.5">
+                                {["Zero file retention", "Your own Drive", "Free to start"].map(
+                                    (item) => (
+                                        <li
+                                            key={item}
+                                            className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-ink-45"
+                                        >
+                                            <Check size={13} strokeWidth={3} className="text-teal" />
+                                            {item}
+                                        </li>
+                                    )
+                                )}
+                            </ul>
+                        </Reveal>
+                    </div>
+
+                    <Reveal from="right" delay={0.3} amount={0.1}>
+                        <Parallax distance={28}>
+                            <ChatWindow />
+                        </Parallax>
+                    </Reveal>
+                </div>
+            </section>
+
+            {/* ==================== TICKER ==================== */}
+            <div className="border-b-2 border-ink bg-flame py-4">
+                <VelocityMarquee
+                    baseVelocity={3.5}
+                    itemClassName="font-display text-2xl sm:text-4xl font-extrabold uppercase tracking-tight text-paper pr-8"
+                >
+                    Receipts · Notes · Certificates · Bills · ID cards · Assignments ·
+                    Screenshots · Offer letters ·{" "}
+                </VelocityMarquee>
             </div>
 
-            {/* === HERO SECTION === */}
-            <section className="relative min-h-screen flex flex-col justify-center overflow-hidden pt-28 pb-10">
-                <div className="container mx-auto px-6 relative z-10">
-                    <div className="text-center mb-10">
-                        <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/10 bg-white/5 backdrop-blur-sm mb-8">
-                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                            <span className="text-sm font-medium text-white/70">🚀 Smart Document Organization</span>
-                        </motion.div>
+            {/* ==================== FEATURES (sticky stack) ==================== */}
+            <section id="features" className="border-b-2 border-ink bg-paper-2 py-24">
+                <div className="mx-auto max-w-6xl px-6">
+                    <SectionHeading
+                        eyebrow="What it does"
+                        title="Four things, done properly."
+                        lead="No feature grid of vague promises. Here is exactly what happens when you hand DocsFlow a document."
+                    />
 
-                        <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl xl:text-8xl tracking-tight leading-[1.05] mb-6">
-                            <span className="font-light italic text-white/40">Dedicated AI</span>{" "}
-                            <span className="font-extrabold text-white">Organize Your</span>
-                            <br />
-                            <span className="font-extrabold bg-gradient-to-r from-green-400 via-blue-500 to-green-400 bg-clip-text text-transparent animate-gradient-x">Documents Instantly</span>
-                        </motion.h1>
+                    <StickyStack className="mt-16" topOffset={110} step={14}>
+                        {FEATURES.map((feature) => (
+                            <FeatureCard key={feature.tag} feature={feature} />
+                        ))}
+                    </StickyStack>
+                </div>
+            </section>
 
-                        <motion.p initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="text-base sm:text-lg md:text-xl text-white/50 mb-8 max-w-2xl mx-auto leading-relaxed">
-                            Forward documents to WhatsApp. AI analyzes, sorts, and saves to Google Drive. <span className="text-white/70 font-medium">No manual work required.</span>
-                        </motion.p>
-
-                        <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
-                            <Link to="/auth" className="group inline-flex items-center gap-3 px-10 py-5 rounded-full bg-white text-black font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105 shadow-xl shadow-white/10">
-                                Start Organizing Now
-                                <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                            </Link>
-                            <a href="/login" className="inline-flex items-center gap-2 px-8 py-5 rounded-full border border-white/20 hover:bg-white/5 text-white font-medium text-lg transition-all">
-                                Login to Dashboard
-                            </a>
-                        </motion.div>
-
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="flex flex-wrap items-center justify-center gap-6 lg:gap-10 text-white/30 mb-20">
-                            {companyLogos.map((company, i) => (
-                                <div key={i} className="flex items-center gap-2 hover:text-white/50 transition-colors">
-                                    <company.icon size={18} />
-                                    <span className="text-sm font-medium">{company.name}</span>
-                                </div>
-                            ))}
-                        </motion.div>
-
-                        {/* Tagline from Reference */}
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.5 }}
-                            className="mb-10"
-                        >
-                            <h3 className="text-2xl md:text-3xl font-medium text-white/90 text-center tracking-tight">
-                                “Paving the way for limitless <br className="hidden sm:block" /> innovation and growth.”
-                            </h3>
-                        </motion.div>
+            {/* ============ WORKFLOW (pinned horizontal scroll) ============ */}
+            {/* Do NOT add overflow-hidden here. It would become the scrollport for
+                the pinned track inside HorizontalScroll, which kills position:sticky
+                and leaves the section's scroll budget as dead empty space. The
+                backdrop clips itself, and the sticky viewport clips its own overflow. */}
+            <section
+                id="how-it-works"
+                className="relative border-b-2 border-ink bg-ink bg-graph-invert"
+            >
+                <div className="mx-auto max-w-6xl px-6 pt-16">
+                    <div className="flex max-w-3xl flex-col gap-4">
+                        <Reveal from="up">
+                            <span className="eyebrow inline-flex items-center gap-2 text-lime">
+                                <span className="h-2 w-2 rounded-full bg-lime" />
+                                The workflow
+                            </span>
+                        </Reveal>
+                        <SplitWords
+                            as="h2"
+                            text="From chat to filed, in four moves."
+                            className="font-display text-4xl font-extrabold leading-[0.95] tracking-tight text-paper sm:text-5xl"
+                        />
+                        <Reveal from="up" delay={0.1}>
+                            <p className="flex items-center gap-2.5 text-[17px] leading-relaxed text-paper/60">
+                                Keep scrolling — the track moves sideways.
+                                <ArrowRight size={17} className="text-lime" />
+                            </p>
+                        </Reveal>
                     </div>
+                </div>
 
-                    <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6, duration: 0.7 }} className="relative w-full max-w-[80%] mx-auto">
-                        <FloatingIcon icon={Rocket} className="top-8 -right-8 lg:-right-20" delay={0.7} />
-                        <FloatingIcon icon={Wrench} className="bottom-20 -left-8 lg:-left-20" delay={0.9} />
-                        <div className="relative rounded-3xl overflow-hidden border border-white/10" style={{ zIndex: 10, boxShadow: '0 50px 100px rgba(0,0,0,0.6)' }}>
-                            <div className="h-11 bg-gradient-to-b from-[#1f1f1f] to-[#1a1a1a] border-b border-white/10 flex items-center px-4 gap-3">
-                                <div className="flex gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                                    <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                                    <div className="w-3 h-3 rounded-full bg-green-500" />
-                                </div>
-                                <div className="flex-1 bg-black/40 rounded-lg px-4 py-2 text-xs text-white/50 flex items-center gap-2 border border-white/5 ml-4 max-w-md">
-                                    <Lock size={11} className="text-green-400" />
-                                    <span>web.whatsapp.com</span>
-                                </div>
+                {/* Left padding aligns the first card with the container; the right
+                    side stays narrow so the pan does not end on empty space. The
+                    negative top margin lifts the track above dead centre so it sits
+                    closer to the heading while the section is scrolling in. */}
+                <HorizontalScroll
+                    className="relative"
+                    speed={1.8}
+                    trackClassName="-mt-[6vh] lg:pl-[max(1.5rem,calc((100vw-72rem)/2))]"
+                    backdrop={
+                        <div className="absolute inset-0 overflow-hidden">
+                            {/* The dashed rail the cards ride along, aligned to the
+                                same -6vh offset as the track */}
+                            <div className="absolute inset-x-0 top-[calc(50%-6vh)] border-t-2 border-dashed border-paper/15" />
+
+                            {/* Rail tick marks */}
+                            <div className="absolute inset-x-0 top-[calc(50%-6vh)] flex -translate-y-1/2 justify-between px-[8vw]">
+                                {Array.from({ length: 7 }).map((_, i) => (
+                                    <span
+                                        key={i}
+                                        className={`h-2 w-2 rotate-45 border border-paper/25 ${
+                                            i % 3 === 1 ? "bg-lime/70" : "bg-transparent"
+                                        }`}
+                                    />
+                                ))}
                             </div>
-                            <div className="relative bg-[#0D1418] h-[350px] sm:h-[420px] lg:h-[480px]">
-                                <div className="absolute top-0 left-0 right-0 h-14 bg-gradient-to-b from-[#202c33] to-[#1a252c] z-20 flex items-center px-4 sm:px-6 border-b border-black/30">
-                                    <div className="flex items-center gap-3 sm:gap-4">
-                                        <div className="relative">
-                                            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-blue-500 via-purple-600 to-pink-500 flex items-center justify-center text-sm font-bold text-white shadow-lg">DF</div>
-                                            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#202c33]" />
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-semibold text-white">DocFlow Bot</div>
-                                            <div className="text-xs text-green-400 flex items-center gap-1">
-                                                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                                                online
-                                            </div>
-                                        </div>
+
+                            {/* Oversized outlined geometry — flat, no glow */}
+                            <div className="absolute -left-24 top-[8%] h-72 w-72 rounded-full border-2 border-paper/[0.07]" />
+                            <div className="absolute -left-10 top-[18%] h-40 w-40 rounded-full border-2 border-paper/[0.05]" />
+                            <div className="absolute -right-20 bottom-[6%] h-64 w-64 rotate-12 rounded-[2rem] border-2 border-paper/[0.07]" />
+                            <div className="absolute right-[18%] top-[10%] h-16 w-16 -rotate-12 rounded-xl border-2 border-lime/25" />
+                            <div className="absolute left-[38%] bottom-[10%] h-3 w-3 rounded-full bg-flame/50" />
+                            <div className="absolute left-[62%] top-[14%] h-3 w-3 rounded-full bg-lime/40" />
+
+                            {/* Corner index, like a printed page marker */}
+                            <span className="absolute bottom-8 right-8 font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-paper/20">
+                                01 — 04
+                            </span>
+                        </div>
+                    }
+                >
+                    {STEPS.map((step) => {
+                        const Icon = step.icon;
+                        return (
+                            <article
+                                key={step.num}
+                                className="group relative flex h-[380px] w-[84vw] shrink-0 flex-col overflow-hidden rounded-2xl border-2 border-ink bg-paper shadow-brut-lg transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-2 hover:-rotate-1 hover:shadow-brut-xl sm:w-[380px]"
+                            >
+                                {/* Colour lives in the band, so the card body stays
+                                    paper-and-ink like the rest of the site */}
+                                <div
+                                    className={`flex shrink-0 items-center justify-between border-b-2 border-ink ${step.bg} px-4 py-4`}
+                                >
+                                    {/* Step number as a full badge — the old 10px chip
+                                        was unreadable, and the faint watermark it paired
+                                        with sat behind the example panel */}
+                                    <span className="grid h-12 w-12 place-items-center rounded-xl border-2 border-ink bg-paper font-display text-2xl font-extrabold leading-none tracking-tight text-ink">
+                                        {step.num}
+                                    </span>
+                                    <span className="grid h-12 w-12 place-items-center rounded-xl border-2 border-ink bg-paper text-ink transition-transform duration-300 group-hover:-rotate-12 group-hover:scale-110">
+                                        <Icon size={20} />
+                                    </span>
+                                </div>
+
+                                <div className="relative flex flex-1 flex-col p-6">
+                                    <h3 className="mb-2.5 font-display text-4xl font-extrabold tracking-tight text-ink">
+                                        {step.title}
+                                    </h3>
+                                    <p className="mb-5 text-[15px] leading-relaxed text-ink-70">
+                                        {step.desc}
+                                    </p>
+
+                                    <div
+                                        className={`mt-auto rounded-xl border-2 border-ink ${step.tint} px-4 py-3`}
+                                    >
+                                        <span className="mb-0.5 block font-mono text-[9px] font-bold uppercase tracking-widest text-ink-45">
+                                            {step.exampleLabel}
+                                        </span>
+                                        <span className="block break-all font-mono text-[12.5px] font-bold text-ink">
+                                            {step.example}
+                                        </span>
                                     </div>
                                 </div>
-                                <div className="absolute inset-0 pt-14">
-                                    <ChatCarousel />
+                            </article>
+                        );
+                    })}
+
+                    {/* Closing card doubles as a CTA */}
+                    <article className="group relative flex h-[380px] w-[84vw] shrink-0 flex-col overflow-hidden rounded-2xl border-2 border-ink bg-paper shadow-brut-lg transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-2 hover:-rotate-1 hover:shadow-brut-xl sm:w-[380px]">
+                        <div className="flex shrink-0 items-center justify-between border-b-2 border-ink bg-lime px-4 py-4">
+                            <span className="grid h-12 w-12 place-items-center rounded-xl border-2 border-ink bg-paper text-ink">
+                                <Check size={22} strokeWidth={3} />
+                            </span>
+                            <span className="pr-1 font-mono text-[11px] font-bold uppercase tracking-[0.25em] text-ink">
+                                Done
+                            </span>
+                        </div>
+
+                        <div className="relative flex flex-1 flex-col p-6">
+                            <h3 className="mb-2.5 font-display text-4xl font-extrabold tracking-tight text-ink">
+                                That's it.
+                            </h3>
+                            <p className="mb-5 text-[15px] leading-relaxed text-ink-70">
+                                Four steps, and you did exactly one of them. Set it up once
+                                and the rest runs without you touching a folder again.
+                            </p>
+
+                            <Link
+                                to="/auth"
+                                className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-full border-2 border-ink bg-flame px-5 py-3.5 text-sm font-bold text-paper transition-transform duration-300 hover:-translate-y-0.5"
+                            >
+                                Try it now <ArrowUpRight size={16} />
+                            </Link>
+                        </div>
+                    </article>
+                </HorizontalScroll>
+            </section>
+
+            {/* ==================== NUMBERS ==================== */}
+            <section id="numbers" className="border-b-2 border-ink bg-paper py-24">
+                <div className="mx-auto max-w-6xl px-6">
+                    <SectionHeading
+                        eyebrow="The shape of it"
+                        title="Boring numbers. That's the point."
+                    />
+
+                    <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                        {STATS.map((stat, i) => (
+                            <Reveal key={stat.label} from="up" delay={i * 0.08}>
+                                <div className="card-lift h-full bg-paper-2 p-7">
+                                    <div className="mb-3 font-display text-6xl font-extrabold tracking-tighter text-ink">
+                                        <CountUp to={stat.to} suffix={stat.suffix} />
+                                    </div>
+                                    <p className="text-[15px] font-semibold leading-snug text-ink-70">
+                                        {stat.label}
+                                    </p>
                                 </div>
-                            </div>
-                        </div>
-                    </motion.div>
-                </div>
-            </section>
-
-
-            {/* === FEATURES === */}
-            <section id="features" className="relative py-16">
-                <div className="container mx-auto px-6 relative z-10">
-                    <div className="text-center mb-12">
-                        <motion.h2 initial={{ opacity: 0, y: 15 }} whileInView={{ opacity: 1, y: 0 }} className="text-4xl lg:text-6xl font-bold text-white mb-6">Diverse Features</motion.h2>
-                        <motion.p initial={{ opacity: 0, y: 15 }} whileInView={{ opacity: 1, y: 0 }} className="text-lg text-white/50 max-w-2xl mx-auto">
-                            Explore our diverse features tailored to meet the dynamic needs of modern organization.
-                        </motion.p>
-                    </div>
-
-                    <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <FeatureCard
-                            title="Syllabus Intelligence"
-                            description="Upload your course PDF or syllabus. Our AI automatically parses the document, understands your semester structure, and auto-generates the perfect folder hierarchy in your Google Drive. No manual folder creation needed."
-                            className=""
-                            tall
-                        />
-                        <div className="flex flex-col gap-6">
-                            <FeatureCard
-                                title="WhatsApp Native"
-                                description="Just forward documents to our verified WhatsApp bot. It feels just like chatting with a friend. No new apps to install or learn."
-                                className="h-full"
-                            />
-                            <FeatureCard
-                                title="Magic Search"
-                                description="Need to find 'vaccine certificate' or 'last month's receipt'? Just ask the bot. It instantly locates files across your organised Drive."
-                                className="h-full"
-                            />
-                        </div>
-                        <FeatureCard
-                            title="Private & Secure"
-                            description="Your privacy is paramount. We operate on a zero-retention policy. Files are processed in memory and instantly wired to your personal Google Drive with end-to-end encryption. We never store your documents."
-                            className=""
-                            tall
-                        />
-                    </div>
-                </div>
-            </section>
-
-            {/* === WORKFLOW === */}
-            <section id="how-it-works" className="relative py-16">
-                <div className="container mx-auto px-6 relative z-10">
-                    <div className="text-center mb-12">
-                        <motion.span initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} className="text-sm font-medium text-blue-400 tracking-widest uppercase">Workflow</motion.span>
-                        <motion.h2 initial={{ opacity: 0, y: 15 }} whileInView={{ opacity: 1, y: 0 }} className="text-3xl lg:text-5xl font-bold mt-4 text-white">From Chaos to Order</motion.h2>
-                    </div>
-
-                    <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
-                        <WorkflowCard
-                            num="01"
-                            title="Forward"
-                            desc="Send any document to our WhatsApp bot. That's it."
-                            icon={Send}
-                            color="from-blue-500 to-blue-600"
-                        />
-                        <WorkflowCard
-                            num="02"
-                            title="Analyze"
-                            desc="AI reads the content and understands context."
-                            icon={Sparkles}
-                            color="from-purple-500 to-purple-600"
-                        />
-                        <WorkflowCard
-                            num="03"
-                            title="Organize"
-                            desc="File is renamed and saved to the perfect folder."
-                            icon={UploadCloud}
-                            color="from-green-500 to-green-600"
-                        />
-                    </div>
-                </div>
-            </section>
-
-            {/* === FAQ SECTION === */}
-            <section id="faq" className="relative py-16">
-                <div className="container mx-auto px-6 relative z-10">
-                    <div className="text-center mb-12">
-                        <motion.h2 initial={{ opacity: 0, y: 15 }} whileInView={{ opacity: 1, y: 0 }} className="text-4xl lg:text-6xl font-bold text-white">FAQs</motion.h2>
-                        <motion.p initial={{ opacity: 0, y: 15 }} whileInView={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="text-white/40 mt-5 max-w-lg mx-auto text-lg">
-                            Explore our FAQs for quick answers to common queries about our platform.
-                        </motion.p>
-                    </div>
-
-                    <div className="max-w-3xl mx-auto space-y-4">
-                        {faqData.map((faq, i) => (
-                            <FAQItem
-                                key={i}
-                                question={faq.question}
-                                answer={faq.answer}
-                                isOpen={openFAQ === i}
-                                onClick={() => setOpenFAQ(openFAQ === i ? null : i)}
-                            />
+                            </Reveal>
                         ))}
                     </div>
                 </div>
             </section>
 
-            {/* === CONTACT/CTA === */}
-            <section id="contact" className="relative py-20">
-                <div className="container mx-auto px-6 relative z-10">
-                    <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="max-w-5xl mx-auto">
-                        <div className="relative bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
-                            {/* Header */}
-                            <div className="h-12 bg-black/40 border-b border-white/10 flex items-center justify-between px-6">
-                                <div className="flex items-center gap-2">
-                                    <div className="relative flex h-2 w-2">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                                    </div>
-                                    <span className="text-xs font-medium text-green-400 uppercase tracking-wide">Ready</span>
-                                </div>
-                                <div className="flex gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-red-500/80" />
-                                    <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-                                    <div className="w-3 h-3 rounded-full bg-green-500/80" />
-                                </div>
-                            </div>
+            {/* ==================== SYLLABUS SHOWCASE ==================== */}
+            <section className="overflow-hidden border-b-2 border-ink bg-violet py-24">
+                <div className="mx-auto grid max-w-6xl items-center gap-14 px-6 lg:grid-cols-2">
+                    <div>
+                        <Reveal from="up">
+                            <span className="eyebrow mb-5 inline-flex items-center gap-2 text-lime">
+                                <span className="h-2 w-2 rounded-full bg-lime" />
+                                Setup, once
+                            </span>
+                        </Reveal>
+                        <SplitWords
+                            as="h2"
+                            text="One syllabus in. A term's worth of folders out."
+                            className="mb-6 font-display text-4xl font-extrabold leading-[0.95] tracking-tight text-paper sm:text-5xl"
+                        />
+                        <Reveal from="up" delay={0.1}>
+                            <p className="mb-8 max-w-lg text-lg leading-relaxed text-paper/70">
+                                DocsFlow reads your course document, pulls out every subject
+                                and unit, and shows you the tree before it creates anything.
+                                Edit it, then commit.
+                            </p>
+                        </Reveal>
+                        <Reveal from="up" delay={0.18}>
+                            <Link
+                                to="/auth"
+                                className="inline-flex items-center gap-2 rounded-full border-2 border-ink bg-lime px-7 py-3.5 font-bold text-ink shadow-brut transition-transform hover:-translate-y-0.5"
+                            >
+                                Build my folders <ArrowRight size={18} />
+                            </Link>
+                        </Reveal>
+                    </div>
 
-                            {/* Content */}
-                            <div className="grid lg:grid-cols-2 gap-12 p-12 lg:p-16">
-                                <div className="flex flex-col justify-center">
-                                    <h2 className="text-4xl lg:text-5xl font-bold text-white leading-tight mb-6">
-                                        Ready to organize your documents?
-                                        <div className="h-1.5 w-28 bg-gradient-to-r from-blue-500 to-purple-500 mt-5 rounded-full" />
-                                    </h2>
-                                    <p className="text-gray-400 text-lg leading-relaxed">Open source DocFlow. WhatsApp + AI + Drive.<br />Join thousands organizing smarter.</p>
+                    {/* Content stays visible regardless of scroll state — only the
+                        scale is animated, so nothing can get stranded hidden. */}
+                    <Reveal from="right" amount={0.1}>
+                        <ScrollScale fromScale={0.92} fromRotate={1.5}>
+                            <div className="card-brut overflow-hidden bg-paper shadow-brut-xl">
+                                {/* Card chrome */}
+                                <div className="flex items-center justify-between border-b-2 border-ink bg-paper-2 px-5 py-3.5">
+                                    <span className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-ink-45">
+                                        <FolderTree size={13} className="text-ink" />
+                                        generated tree
+                                    </span>
+                                    <span className="rounded-full border-2 border-ink bg-teal-soft px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase text-ink">
+                                        editable
+                                    </span>
                                 </div>
-                                <div className="flex flex-col justify-center gap-4">
-                                    <Link to="/auth" className="group flex items-center justify-center gap-3 px-8 py-5 bg-white text-black rounded-2xl font-bold text-lg hover:bg-gray-100 transition-all hover:scale-105">
-                                        <MessageSquare size={20} />
-                                        Start Organizing Free
-                                        <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                                    </Link>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <a href="https://github.com/aryavansh19" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
-                                            <Github size={18} />GITHUB
-                                        </a>
-                                        <a href="https://wa.me/+15551685392" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/10 transition-all font-medium">
-                                            <MessageSquare size={18} />TRY BOT
-                                        </a>
+
+                                <div className="p-5">
+                                    {/* Drive root */}
+                                    <div className="mb-3 flex items-center gap-2.5 rounded-xl border-2 border-ink bg-ink px-4 py-2.5">
+                                        <Folder size={14} className="text-lime" />
+                                        <span className="font-mono text-xs font-bold text-paper">
+                                            My Drive / DocsFlow
+                                        </span>
                                     </div>
+
+                                    <ul className="space-y-2">
+                                        {SYLLABUS_TREE.map((subject) => (
+                                            <li key={subject.name}>
+                                                <div
+                                                    className={`flex items-center justify-between rounded-xl border-2 border-ink ${subject.color} px-4 py-2.5`}
+                                                >
+                                                    <span className="flex items-center gap-2.5 font-mono text-[13px] font-bold text-ink">
+                                                        <Folder size={14} />
+                                                        {subject.name}
+                                                    </span>
+                                                    <span className="font-mono text-[10px] font-bold text-ink-70">
+                                                        {subject.units.length} units
+                                                    </span>
+                                                </div>
+
+                                                {/* One subject shown expanded, to imply depth */}
+                                                {subject.expanded && (
+                                                    <ul className="mt-2 space-y-1.5 border-l-2 border-dashed border-ink/30 pl-4">
+                                                        {subject.units.map((unit) => (
+                                                            <li
+                                                                key={unit}
+                                                                className="flex items-center gap-2 rounded-lg border-2 border-ink bg-paper-2 px-3 py-1.5"
+                                                            >
+                                                                <FileText size={12} className="text-ink-45" />
+                                                                <span className="font-mono text-[11px] font-semibold text-ink-70">
+                                                                    {unit}
+                                                                </span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+
+                                {/* Card footer summary */}
+                                <div className="flex items-center justify-between border-t-2 border-ink bg-paper-2 px-5 py-3.5">
+                                    <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-ink-45">
+                                        4 subjects · 17 folders
+                                    </span>
+                                    <span className="flex items-center gap-1.5 rounded-full border-2 border-ink bg-lime px-3 py-1 font-mono text-[10px] font-bold uppercase text-ink">
+                                        <Check size={11} strokeWidth={3.5} />
+                                        ready
+                                    </span>
                                 </div>
                             </div>
+                        </ScrollScale>
+                    </Reveal>
+                </div>
+            </section>
+
+            {/* ==================== FAQ ==================== */}
+            {/* No bottom border here: the footer already draws its own top border,
+                and two adjacent 2px borders rendered as one 4px line. */}
+            <section id="faq" className="bg-paper-2 py-24">
+                <div className="mx-auto max-w-6xl px-6">
+                    <div className="grid gap-12 lg:grid-cols-[0.85fr_1.15fr]">
+                        <div className="lg:sticky lg:top-28 lg:self-start">
+                            <SectionHeading
+                                eyebrow="Questions"
+                                title="The honest answers."
+                                lead="Short, specific, no marketing hedging."
+                            />
                         </div>
-                    </motion.div>
+
+                        <div className="space-y-3.5">
+                            {FAQS.map((faq, i) => (
+                                <Reveal key={faq.q} from="up" delay={i * 0.05}>
+                                    <FaqRow
+                                        faq={faq}
+                                        index={i}
+                                        isOpen={openFaq === i}
+                                        onToggle={() => setOpenFaq(openFaq === i ? null : i)}
+                                    />
+                                </Reveal>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </section>
 

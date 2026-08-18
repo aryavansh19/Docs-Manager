@@ -1,69 +1,122 @@
-import React, { useEffect } from "react";
-import Footer from "../components/Footer";
-import { motion } from "framer-motion";
+import React from "react";
+import LegalPage from "../components/LegalPage";
+
+const SECTIONS = [
+    {
+        title: "Acceptance of terms",
+        body: (
+            <p>
+                By accessing or using DocsFlow you agree to these Terms of Service. If you
+                do not agree with them, please do not use the service.
+            </p>
+        ),
+    },
+    {
+        title: "Use of the service",
+        body: (
+            <>
+                <p>
+                    You agree to use DocsFlow for lawful purposes only, and you remain
+                    responsible for every document you send through it. Specifically, you
+                    must not use the service to:
+                </p>
+                <ul className="ml-1 space-y-2">
+                    {[
+                        "Store or transmit unlawful material.",
+                        "Upload content you do not have the right to store.",
+                        "Attempt to access another user's account, files or index.",
+                        "Interfere with, overload or reverse engineer the service.",
+                    ].map((item) => (
+                        <li key={item} className="flex gap-2.5">
+                            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-flame" />
+                            <span>{item}</span>
+                        </li>
+                    ))}
+                </ul>
+            </>
+        ),
+    },
+    {
+        title: "Your account",
+        body: (
+            <p>
+                Your account is tied to your Google identity and your WhatsApp number. You
+                are responsible for keeping access to both secure, and for activity that
+                happens under your account. Tell us promptly if you believe it has been
+                compromised.
+            </p>
+        ),
+    },
+    {
+        title: "Google Drive access",
+        body: (
+            <p>
+                DocsFlow acts on your Google Drive only with the permission you grant during
+                sign-in, and only to create folders and upload the documents you send. You
+                may revoke that access at any time from your Google Account settings, which
+                stops all filing immediately. Files already written to your Drive stay
+                there, under your ownership.
+            </p>
+        ),
+    },
+    {
+        title: "Availability and accuracy",
+        body: (
+            <p>
+                The service is provided on an "as is" basis. Automated classification is
+                helpful but not perfect: a document may occasionally be named or filed in a
+                way you would not have chosen. Review anything important, and treat DocsFlow
+                as a convenience rather than your only copy or system of record.
+            </p>
+        ),
+    },
+    {
+        title: "Intellectual property",
+        body: (
+            <p>
+                The service, its content and its features remain the property of DocsFlow and
+                its licensors. Your documents remain entirely yours. Our name and branding
+                may not be used to represent another product or service without written
+                consent.
+            </p>
+        ),
+    },
+    {
+        title: "Termination",
+        body: (
+            <p>
+                We may suspend or terminate access if these Terms are breached. You may stop
+                using DocsFlow at any time by revoking Drive access and asking us to delete
+                your account. On termination your right to use the service ends, and your
+                files remain in your own Drive.
+            </p>
+        ),
+    },
+    {
+        title: "Contact",
+        body: (
+            <p>
+                Questions about these Terms? Email{" "}
+                <a
+                    href="mailto:support@docsflow.com"
+                    className="link-wipe font-bold text-ink"
+                >
+                    support@docsflow.com
+                </a>
+                .
+            </p>
+        ),
+    },
+];
 
 export default function TermsOfService() {
-    useEffect(() => {
-        window.scrollTo(0, 0);
-    }, []);
-
     return (
-        <div className="min-h-screen text-white font-sans overflow-x-hidden selection:bg-blue-500/30 relative pt-24">
-            {/* Background */}
-            <div className="fixed inset-0 pointer-events-none" style={{ background: 'linear-gradient(135deg, #030303 0%, #050510 50%, #030303 100%)', zIndex: -1 }}>
-                <div className="absolute top-[5%] left-[-5%] w-[800px] h-[800px] bg-gradient-to-br from-blue-600/20 via-cyan-500/10 to-transparent rounded-full blur-[180px]" />
-                <div className="absolute bottom-[10%] right-[-10%] w-[500px] h-[500px] bg-gradient-to-tr from-purple-500/10 to-transparent rounded-full blur-[140px]" />
-                <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`, backgroundSize: '80px 80px' }} />
-            </div>
-
-            <div className="container mx-auto px-6 py-12 max-w-4xl relative z-10">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mb-12"
-                >
-                    <span className="text-blue-400 font-medium tracking-wide uppercase text-sm">Legal</span>
-                    <h1 className="text-4xl md:text-5xl font-bold mt-3 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">Terms of Service</h1>
-                    <p className="text-white/50 text-lg">Last updated: {new Date().toLocaleDateString()}</p>
-                </motion.div>
-
-                <div className="space-y-12 text-white/80 leading-relaxed">
-                    <Section title="1. Acceptance of Terms">
-                        <p>By accessing and using DocsFlow's services, you agree to comply with and be bound by these Terms of Service. If you do not agree to these terms, please do not use our services.</p>
-                    </Section>
-
-                    <Section title="2. Use of Service">
-                        <p>You agree to use our services only for lawful purposes. You are responsible for all content that you upload or process through our platform. You must not use our service to store or transmit any illegal or unauthorized material.</p>
-                    </Section>
-
-                    <Section title="3. User Accounts">
-                        <p>To access certain features, you may need to register for an account. You are responsible for maintaining the confidentiality of your account information and for all activities that occur under your account.</p>
-                    </Section>
-
-                    <Section title="4. Intellectual Property">
-                        <p>The service and its original content, features, and functionality are and will remain the exclusive property of DocsFlow and its licensors. Our trademarks and trade dress may not be used in connection with any product or service without the prior written consent of DocsFlow.</p>
-                    </Section>
-
-                    <Section title="5. Termination">
-                        <p>We may terminate or suspend your account specifically if you breach the Terms. Upon termination, your right to use the Service will immediately cease.</p>
-                    </Section>
-
-                    <Section title="6. Contact Us">
-                        <p>If you have any questions about these Terms, please contact us at support@docsflow.com.</p>
-                    </Section>
-                </div>
-            </div>
-
-            <Footer />
-        </div>
+        <LegalPage
+            title="Terms of Service"
+            updated={new Date().toLocaleDateString()}
+            accent="bg-cobalt-soft"
+            intro="The ground rules for using DocsFlow: what you're responsible for, what we're responsible for, and what happens to your files if either of us walks away."
+            sections={SECTIONS}
+        />
     );
 }
-
-const Section = ({ title, children }) => (
-    <section className="border-b border-white/5 pb-8">
-        <h2 className="text-2xl font-semibold mb-4 text-white/90">{title}</h2>
-        <div className="text-white/60 space-y-4">
-            {children}
-        </div>
-    </section>
-);

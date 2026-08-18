@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { Phone, ArrowRight, ShieldCheck, ArrowLeft } from "lucide-react"; // Removed Terminal
 import { Link } from "react-router-dom";
-import { supabase } from "../supabaseClient"; // Import Supabase
+import { Phone, ArrowRight, ShieldCheck } from "lucide-react";
+import { supabase } from "../supabaseClient";
+import AuthShell from "../components/AuthShell";
 
 export default function Signup() {
     const [phone, setPhone] = useState("");
@@ -45,105 +45,105 @@ export default function Signup() {
     };
 
     return (
-        <div className="min-h-screen bg-[#020202] text-white font-mono flex flex-col items-center justify-center relative overflow-hidden">
+        <AuthShell
+            backTo="/auth"
+            backLabel="Back"
+            accent="cobalt"
+            footer={
+                <>
+                    Already have an account?{" "}
+                    <Link to="/login" className="link-wipe font-bold text-ink">
+                        Log in
+                    </Link>
+                </>
+            }
+        >
+            <div className="p-8 sm:p-10">
+                <span className="eyebrow mb-5 inline-flex items-center gap-2 rounded-full border-2 border-ink bg-cobalt px-3.5 py-1.5 text-paper">
+                    <ShieldCheck size={12} />
+                    Registration
+                </span>
 
-            {/* Background Effects (Kept exactly as is) */}
-            <div className="absolute inset-0 z-0 pointer-events-none opacity-30"
-                style={{
-                    backgroundImage: 'radial-gradient(circle, #333 1px, transparent 1px)',
-                    backgroundSize: '32px 32px'
-                }}
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-purple-900/10 via-transparent to-blue-900/10 z-0 pointer-events-none" />
-            <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-600/20 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
-            <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
+                <h1 className="mb-3 font-display text-4xl font-extrabold tracking-tight">
+                    Link your WhatsApp.
+                </h1>
+                <p className="mb-8 text-[15px] leading-relaxed text-ink-70">
+                    This number becomes your file gateway. Anything you forward from it
+                    gets sorted into your Drive.
+                </p>
 
-            {/* Navbar / Back Button */}
-            <div className="absolute top-8 left-8 z-20">
-                <Link to="/auth" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors group">
-                    <ArrowLeft size={16} />
-                    <span className="text-sm font-bold tracking-tight">Back</span>
-                </Link>
-            </div>
-
-            <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-                className="w-full max-w-md relative z-10 mx-4"
-            >
-                <div className="bg-[#0a0a0a]/80 border border-white/10 rounded-2xl p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden group">
-
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 via-blue-500 to-purple-500 opacity-50 group-hover:opacity-100 transition-opacity" />
-
-                    <div className="mb-8">
-                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-purple-400 font-bold uppercase tracking-wider mb-4">
-                            <ShieldCheck size={12} />
-                            <span>Registration Protocol</span>
-                        </div>
-                        <h1 className="text-3xl font-bold mb-2 tracking-tight text-white">
-                            Join the Network
-                        </h1>
-                        <p className="text-white/40 text-sm leading-relaxed">
-                            Link your WhatsApp to create a secure file gateway.
-                        </p>
-                    </div>
-
-                    {/* Input Section */}
-                    <div className="mb-6 space-y-2">
-                        <label className="text-[11px] text-purple-300/70 uppercase tracking-widest font-bold ml-1">WhatsApp Number</label>
-                        <div className="relative group/input">
-                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-white/30 group-focus-within/input:text-purple-400 transition-colors">
-                                <Phone size={18} />
-                            </div>
-                            <input
-                                type="tel"
-                                placeholder="919876543210"
-                                value={phone}
-                                onChange={(e) => setPhone(e.target.value.replace(/[^0-9]/g, ''))}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-white/20 focus:outline-none focus:border-purple-500/50 focus:bg-white/10 transition-all font-mono text-lg shadow-inner"
-                                autoFocus
-                            />
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] text-white/20 font-mono">
-                                NO +
-                            </div>
-                        </div>
-                        <p className="text-[10px] text-white/30 pl-1">
-                            * Enter country code + number.
-                        </p>
-                    </div>
-
-                    {/* Action Button */}
-                    <button
-                        onClick={handleSignup}
-                        disabled={!phone || isLoading}
-                        className={`w-full py-4 font-bold rounded-xl flex items-center justify-center gap-3 transition-all relative overflow-hidden group/btn ${phone
-                            ? "bg-white hover:bg-gray-200 text-black cursor-pointer shadow-[0_0_20px_rgba(255,255,255,0.1)]"
-                            : "bg-white/5 text-white/20 cursor-not-allowed border border-white/5"
-                            }`}
+                <div className="mb-7">
+                    <label
+                        htmlFor="phone"
+                        className="eyebrow mb-2.5 block text-ink-45"
                     >
-                        {isLoading ? (
-                            <span className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                        ) : (
-                            <>
-                                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-[18px] h-[18px] group-hover/btn:scale-110 transition-transform" />
-                                <span className="tracking-wide">Verify & Continue</span>
-                                {phone && <ArrowRight size={16} className="absolute right-6 opacity-0 group-hover/btn:opacity-100 group-hover/btn:translate-x-1 transition-all" />}
-                            </>
-                        )}
-                    </button>
+                        WhatsApp number
+                    </label>
 
-                    <div className="mt-6 text-center pt-6 border-t border-white/5">
-                        <p className="text-xs text-white/40">
-                            Already have an account?{" "}
-                            <Link to="/login" className="text-purple-400 hover:text-purple-300 font-bold underline decoration-purple-500/30 underline-offset-4 ml-1 transition-colors">
-                                Log In
-                            </Link>
-                        </p>
+                    <div className="relative">
+                        <span
+                            className="pointer-events-none absolute inset-y-0 left-0 grid w-12 place-items-center text-ink-45"
+                            aria-hidden="true"
+                        >
+                            <Phone size={18} />
+                        </span>
+                        <input
+                            id="phone"
+                            type="tel"
+                            inputMode="numeric"
+                            placeholder="919876543210"
+                            value={phone}
+                            onChange={(e) => setPhone(e.target.value.replace(/[^0-9]/g, ''))}
+                            aria-describedby="phone-hint"
+                            className="w-full rounded-xl border-2 border-ink bg-paper-2 py-4 pl-12 pr-16 font-mono text-lg font-bold text-ink transition-colors placeholder:font-normal placeholder:text-ink-25 focus:bg-lime-soft focus:outline-none"
+                            autoFocus
+                        />
+                        <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 rounded-md border-2 border-ink bg-paper px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-ink-45">
+                            no +
+                        </span>
                     </div>
 
+                    <p id="phone-hint" className="mt-2.5 text-xs text-ink-45">
+                        Country code first, then the number. No plus sign, no spaces.
+                    </p>
                 </div>
-            </motion.div>
-        </div>
+
+                <button
+                    type="button"
+                    onClick={handleSignup}
+                    disabled={!phone || isLoading}
+                    className={`group flex w-full items-center justify-center gap-3 rounded-full border-2 border-ink px-6 py-4 font-bold transition-all ${
+                        phone && !isLoading
+                            ? "bg-ink text-paper shadow-brut hover:bg-flame"
+                            : "cursor-not-allowed bg-paper-3 text-ink-45"
+                    }`}
+                >
+                    {isLoading ? (
+                        <>
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-paper/30 border-t-paper" />
+                            Connecting…
+                        </>
+                    ) : (
+                        <>
+                            <span className="grid h-6 w-6 place-items-center rounded-full bg-paper">
+                                <img
+                                    src="https://www.svgrepo.com/show/475656/google-color.svg"
+                                    alt=""
+                                    aria-hidden="true"
+                                    className="h-3.5 w-3.5"
+                                />
+                            </span>
+                            Verify &amp; continue
+                            {phone && (
+                                <ArrowRight
+                                    size={16}
+                                    className="transition-transform group-hover:translate-x-1"
+                                />
+                            )}
+                        </>
+                    )}
+                </button>
+            </div>
+        </AuthShell>
     );
 }

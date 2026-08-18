@@ -1,106 +1,202 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { motion, AnimatePresence, useScroll, useMotionValueEvent } from "framer-motion";
-import { Menu, X, ArrowRight } from "lucide-react";
+import {
+    motion,
+    AnimatePresence,
+    useScroll,
+    useMotionValueEvent,
+} from "framer-motion";
+import { Menu, X, ArrowUpRight } from "lucide-react";
+import { ScrollProgress } from "../lib/motion";
+
+const NAV_LINKS = [
+    { label: "Features", id: "features" },
+    { label: "Workflow", id: "how-it-works" },
+    { label: "Numbers", id: "numbers" },
+    { label: "FAQ", id: "faq" },
+];
+
+// Routes that render their own full-screen chrome.
+const HIDDEN_ON = [
+    "/dashboard",
+    "/auth",
+    "/login",
+    "/signup",
+    "/setup",
+    "/verify",
+];
 
 export default function FloatingNav() {
     const location = useLocation();
     const [isOpen, setIsOpen] = useState(false);
     const [hidden, setHidden] = useState(false);
     const [scrolled, setScrolled] = useState(false);
+    const lastY = useRef(0);
     const { scrollY } = useScroll();
 
     useMotionValueEvent(scrollY, "change", (latest) => {
-        if (latest > window.innerHeight - 100) {
-            setHidden(true);
-        } else {
-            setHidden(false);
-        }
-        setScrolled(latest > 150);
+        const previous = lastY.current;
+        // Reveal on scroll up, conceal on scroll down — never permanently gone.
+        if (latest > previous && latest > 320) setHidden(true);
+        else if (latest < previous) setHidden(false);
+
+        setScrolled(latest > 40);
+        lastY.current = latest;
     });
+
+    // Lock page scroll and wire Escape while the mobile sheet is open.
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const onKeyDown = (event) => {
+            if (event.key === "Escape") setIsOpen(false);
+        };
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        window.addEventListener("keydown", onKeyDown);
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener("keydown", onKeyDown);
+        };
+    }, [isOpen]);
+
+    const isHiddenRoute = HIDDEN_ON.some((path) =>
+        location.pathname.startsWith(path)
+    );
+    if (isHiddenRoute) return null;
 
     const scrollToSection = (id) => {
         const element = document.getElementById(id);
-        if (element) element.scrollIntoView({ behavior: 'smooth' });
+        if (element) element.scrollIntoView({ behavior: "smooth", block: "start" });
     };
-
-    // Hide on special pages
-    if (location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/auth') || location.pathname.startsWith('/login') || location.pathname.startsWith('/signup') || location.pathname.startsWith('/setup') || location.pathname.startsWith('/verify') || location.pathname.startsWith('/create')) {
-        return null;
-    }
 
     return (
         <>
-            <motion.nav
-                initial={{ y: 0, opacity: 1 }}
-                animate={{
-                    y: hidden ? -100 : 0,
-                    opacity: hidden ? 0 : 1,
-                    width: "95%",
-                    maxWidth: scrolled ? "60rem" : "80rem",
-                    top: "24px",
-                    borderRadius: scrolled ? "50px" : "0px",
-                    backgroundColor: scrolled ? "rgba(17, 17, 17, 0.9)" : "transparent",
-                    borderColor: scrolled ? "rgba(255, 255, 255, 0.1)" : "transparent",
-                }}
-                transition={{ duration: 0.3, ease: "easeInOut" }}
-                className="fixed left-1/2 -translate-x-1/2 z-50 backdrop-blur-sm border border-transparent overflow-hidden"
-            >
-                <div className="w-full px-6 py-4 flex items-center justify-between">
+            <ScrollProgress />
 
-                    {/* Logo - DocsFlow style */}
-                    <Link to="/" className="flex items-center gap-2">
-                        <span className="text-xl md:text-2xl font-bold tracking-tighter text-white">DocsFlow</span>
+            <motion.header
+                initial={{ y: -120 }}
+                animate={{ y: hidden ? -120 : 0 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className="fixed inset-x-0 top-0 z-50 px-4 pt-4 sm:px-6"
+            >
+                <nav
+                    aria-label="Main"
+                    className={`mx-auto flex items-center justify-between gap-4 rounded-full border-2 px-4 py-3 transition-all duration-300 sm:px-6 ${
+                        scrolled
+                            ? "max-w-4xl border-ink bg-paper shadow-brut"
+                            : "max-w-6xl border-transparent bg-transparent"
+                    }`}
+                >
+                    <Link
+                        to="/"
+                        className="group flex shrink-0 items-center gap-2.5"
+                        aria-label="DocsFlow home"
+                    >
+                        <span className="grid h-9 w-9 place-items-center rounded-lg border-2 border-ink bg-flame font-display text-base font-extrabold text-paper transition-transform duration-300 group-hover:-rotate-12">
+                            D
+                        </span>
+                        <span className="font-display text-xl font-extrabold tracking-tight text-ink">
+                            DocsFlow
+                        </span>
                     </Link>
 
-                    {/* Links */}
-                    {/* Links */}
-                    <div className="hidden md:flex items-center gap-8">
-                        {[
-                            { label: 'Features', id: 'features' },
-                            { label: 'Workflow', id: 'how-it-works' },
-                            { label: 'Get in Touch', id: 'contact' }
-                        ].map((item) => (
+                    <div className="hidden items-center gap-1 md:flex">
+                        {NAV_LINKS.map((item) => (
                             <button
-                                key={item.label}
+                                key={item.id}
+                                type="button"
                                 onClick={() => scrollToSection(item.id)}
-                                className="text-base font-medium text-white/70 hover:text-white transition-colors"
+                                className="rounded-full px-4 py-2 text-sm font-semibold text-ink-70 transition-colors hover:bg-lime hover:text-ink"
                             >
                                 {item.label}
                             </button>
                         ))}
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-3">
-                        <Link to="/auth" className={`px-6 py-2.5 rounded-full text-base font-medium transition-all ${scrolled ? 'bg-white/10 text-white hover:bg-white hover:text-black' : 'bg-white text-black hover:bg-gray-200'}`}>
+                    <div className="flex shrink-0 items-center gap-2">
+                        <Link
+                            to="/auth"
+                            className="group hidden items-center gap-2 rounded-full border-2 border-ink bg-ink px-5 py-2.5 text-sm font-bold text-paper shadow-brut-xs transition-all hover:bg-flame hover:text-ink sm:flex"
+                        >
                             Start Organizing
+                            <ArrowUpRight
+                                size={16}
+                                className="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+                            />
                         </Link>
-                        <button className="md:hidden p-2 text-white/80" onClick={() => setIsOpen(!isOpen)}>
-                            {isOpen ? <X /> : <Menu />}
+
+                        <button
+                            type="button"
+                            className="grid h-10 w-10 place-items-center rounded-full border-2 border-ink bg-paper text-ink transition-colors hover:bg-lime md:hidden"
+                            onClick={() => setIsOpen(true)}
+                            aria-label="Open navigation menu"
+                            aria-expanded={isOpen}
+                        >
+                            <Menu size={18} />
                         </button>
                     </div>
-                </div>
-            </motion.nav>
+                </nav>
+            </motion.header>
 
-            {/* Mobile Menu */}
             <AnimatePresence>
                 {isOpen && (
                     <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-40 bg-[#0a0a0a] flex flex-col items-center justify-center gap-8 md:hidden"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Navigation menu"
+                        initial={{ clipPath: "inset(0 0 100% 0)" }}
+                        animate={{ clipPath: "inset(0 0 0% 0)" }}
+                        exit={{ clipPath: "inset(0 0 100% 0)" }}
+                        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                        className="fixed inset-0 z-[70] flex flex-col bg-paper bg-dots md:hidden"
                     >
-                        <button onClick={() => setIsOpen(false)} className="absolute top-8 right-8 text-white/50 hover:text-white"><X size={32} /></button>
-                        {[
-                            { label: 'Features', id: 'features' },
-                            { label: 'Workflow', id: 'how-it-works' },
-                            { label: 'Get in Touch', id: 'contact' }
-                        ].map((item) => (
-                            <button key={item.label} onClick={() => { scrollToSection(item.id); setIsOpen(false); }} className="text-3xl font-bold text-white hover:text-blue-400 transition-colors">{item.label}</button>
-                        ))}
-                        <Link to="/auth" className="w-64 py-4 rounded-full bg-white text-black font-bold text-center" onClick={() => setIsOpen(false)}>Start Organizing</Link>
+                        <div className="flex items-center justify-between border-b-2 border-ink px-6 py-5">
+                            <span className="font-display text-xl font-extrabold">Menu</span>
+                            <button
+                                type="button"
+                                onClick={() => setIsOpen(false)}
+                                className="grid h-10 w-10 place-items-center rounded-full border-2 border-ink bg-flame text-paper"
+                                aria-label="Close navigation menu"
+                                autoFocus
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <nav
+                            aria-label="Mobile"
+                            className="flex flex-1 flex-col justify-center gap-2 px-6"
+                        >
+                            {NAV_LINKS.map((item, i) => (
+                                <motion.button
+                                    key={item.id}
+                                    type="button"
+                                    initial={{ opacity: 0, x: -30 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.15 + i * 0.07, duration: 0.5 }}
+                                    onClick={() => {
+                                        scrollToSection(item.id);
+                                        setIsOpen(false);
+                                    }}
+                                    className="border-b-2 border-ink/10 py-4 text-left font-display text-4xl font-extrabold tracking-tight text-ink transition-colors hover:text-flame"
+                                >
+                                    {item.label}
+                                </motion.button>
+                            ))}
+                        </nav>
+
+                        <div className="p-6">
+                            <Link
+                                to="/auth"
+                                onClick={() => setIsOpen(false)}
+                                className="flex w-full items-center justify-center gap-2 rounded-full border-2 border-ink bg-ink py-4 font-bold text-paper shadow-brut"
+                            >
+                                Start Organizing <ArrowUpRight size={18} />
+                            </Link>
+                        </div>
                     </motion.div>
                 )}
             </AnimatePresence>
