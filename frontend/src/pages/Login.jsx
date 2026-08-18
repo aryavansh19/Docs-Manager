@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { CheckCircle, Terminal, ArrowRight, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
-import { supabase } from "../supabaseClient"; // Import Supabase
+import { ShieldCheck, ArrowRight, Check } from "lucide-react";
+import { supabase } from "../supabaseClient";
+import AuthShell from "../components/AuthShell";
 
 export default function Login() {
     const [isLoading, setIsLoading] = useState(false);
@@ -21,7 +21,11 @@ export default function Login() {
                     redirectTo: redirectUrl,
                     queryParams: {
                         access_type: 'offline',
-                        prompt: 'select_account',
+                        // Google only issues a new refresh token when consent is granted
+                        // again. With select_account, a returning user gets no refresh
+                        // token, so an expired or revoked one could never be replaced and
+                        // every Drive call would keep failing.
+                        prompt: 'consent select_account',
                     },
                     scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email'
                 },
@@ -36,89 +40,78 @@ export default function Login() {
     };
 
     return (
-        <div className="min-h-screen bg-[#020202] text-white font-mono flex flex-col items-center justify-center relative overflow-hidden">
+        <AuthShell
+            backTo="/auth"
+            backLabel="Back"
+            accent="lime"
+            footer={
+                <>
+                    No account yet?{" "}
+                    <Link to="/signup" className="link-wipe font-bold text-ink">
+                        Create one
+                    </Link>
+                </>
+            }
+        >
+            <div className="p-8 sm:p-10">
+                <span className="eyebrow mb-5 inline-flex items-center gap-2 rounded-full border-2 border-ink bg-lime px-3.5 py-1.5 text-ink">
+                    <ShieldCheck size={12} />
+                    Access
+                </span>
 
-            {/* Background Effects (Kept exactly as is) */}
-            <div className="absolute inset-0 z-0 pointer-events-none opacity-30"
-                style={{
-                    backgroundImage: 'radial-gradient(circle, #333 1px, transparent 1px)',
-                    backgroundSize: '32px 32px'
-                }}
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-blue-900/10 via-transparent to-purple-900/10 z-0 pointer-events-none" />
-            <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
-            <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-600/20 rounded-full blur-[120px] pointer-events-none mix-blend-screen" />
+                <h1 className="mb-3 font-display text-4xl font-extrabold tracking-tight">
+                    Welcome back.
+                </h1>
+                <p className="mb-8 text-[15px] leading-relaxed text-ink-70">
+                    Sign in with the Google account you connected. We match your workspace
+                    by email — nothing else to remember.
+                </p>
 
-            <div className="absolute top-8 left-8 z-20">
-                <Link to="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors group">
-                    <div className="p-1.5 rounded-md bg-white/5 group-hover:bg-white/10 transition-colors border border-white/10">
-                        <Terminal size={16} />
-                    </div>
-                    <span className="text-sm font-bold tracking-tight">DocFlow.tech</span>
-                </Link>
+                <ul className="mb-8 space-y-2.5 rounded-xl border-2 border-ink bg-paper-2 p-5">
+                    {[
+                        "Identified automatically by Google email",
+                        "Drive stays connected from last time",
+                        "No password to type or reset",
+                    ].map((item) => (
+                        <li key={item} className="flex items-start gap-2.5">
+                            <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 border-ink bg-teal text-ink">
+                                <Check size={11} strokeWidth={3.5} />
+                            </span>
+                            <span className="text-sm font-medium text-ink-70">{item}</span>
+                        </li>
+                    ))}
+                </ul>
+
+                <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={isLoading}
+                    className="group flex w-full items-center justify-center gap-3 rounded-full border-2 border-ink bg-ink px-6 py-4 font-bold text-paper shadow-brut transition-all hover:bg-flame disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                    {isLoading ? (
+                        <>
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-paper/30 border-t-paper" />
+                            Connecting…
+                        </>
+                    ) : (
+                        <>
+                            <span className="grid h-6 w-6 place-items-center rounded-full bg-paper">
+                                <img
+                                    src="https://www.svgrepo.com/show/475656/google-color.svg"
+                                    alt=""
+                                    aria-hidden="true"
+                                    className="h-3.5 w-3.5"
+                                />
+                            </span>
+                            Continue with Google
+                            <ArrowRight
+                                size={16}
+                                className="transition-transform group-hover:translate-x-1"
+                            />
+                        </>
+                    )}
+                </button>
             </div>
-
-            <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-                className="w-full max-w-md relative z-10 mx-4"
-            >
-                <div className="bg-[#0a0a0a]/80 border border-white/10 rounded-2xl p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden group">
-
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 opacity-50 group-hover:opacity-100 transition-opacity" />
-
-                    <div className="mb-8">
-                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-blue-400 font-bold uppercase tracking-wider mb-4">
-                            <ShieldCheck size={12} />
-                            <span>Access Control</span>
-                        </div>
-                        <h1 className="text-3xl font-bold mb-2 tracking-tight text-white">
-                            Welcome Back
-                        </h1>
-                        <p className="text-white/40 text-sm leading-relaxed">
-                            Authenticate to access your existing dashboard.
-                        </p>
-                    </div>
-
-                    <div className="mb-8">
-                        <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-xl flex items-start gap-3">
-                            <div className="p-2 bg-blue-500/20 rounded-lg text-blue-400">
-                                <CheckCircle size={18} />
-                            </div>
-                            <div>
-                                <h3 className="text-sm font-bold text-blue-100 mb-0.5">Direct Authentication</h3>
-                                <p className="text-xs text-blue-200/60 leading-relaxed">
-                                    We will identify your account using your Google Email automatically.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={handleGoogleLogin}
-                        disabled={isLoading}
-                        className="w-full py-4 bg-white hover:bg-gray-200 text-black font-bold rounded-xl flex items-center justify-center gap-3 transition-all relative overflow-hidden group/btn shadow-[0_0_20px_rgba(255,255,255,0.1)]"
-                    >
-                        {isLoading ? (
-                            <span className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                        ) : (
-                            <>
-                                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-[18px] h-[18px] group-hover/btn:scale-110 transition-transform" />
-                                <span className="tracking-wide">Continue with Google</span>
-                                <ArrowRight size={16} className="absolute right-6 opacity-0 group-hover/btn:opacity-100 group-hover/btn:translate-x-1 transition-all" />
-                            </>
-                        )}
-                    </button>
-
-                    <div className="mt-6 text-center">
-                        <p className="text-white/20 text-[10px] uppercase tracking-widest">
-                            Protected by reCAPTCHA Enterprise
-                        </p>
-                    </div>
-
-                </div>
-            </motion.div>
-        </div>
+        </AuthShell>
     );
 }

@@ -1,4 +1,5 @@
-import { Routes, Route } from "react-router-dom";
+import { useEffect } from "react";
+import { Routes, Route, useLocation } from "react-router-dom";
 import FloatingNav from "./components/FloatingNav";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
@@ -7,15 +8,36 @@ import SetupScreen from "./pages/SetupScreen.jsx";
 import Dashboard from "./pages/Dashboard";
 import AuthOptions from "./pages/AuthOptions";
 import Signup from "./pages/Signup";
-import CreateSubject from "./pages/CreateSubject.jsx";
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from "./components/ProtectedRoute";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 
+/**
+ * Resets scroll on navigation, and honours in-page hash targets
+ * (the footer links to /#features and friends).
+ */
+function ScrollManager() {
+  const { pathname, hash } = useLocation();
+
+  useEffect(() => {
+    if (hash) {
+      const target = document.getElementById(hash.slice(1));
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+    }
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [pathname, hash]);
+
+  return null;
+}
+
 function App() {
   return (
     <>
+      <ScrollManager />
       <FloatingNav />
       <Routes>
         <Route path="/" element={<Home />} />
@@ -23,7 +45,6 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
-        <Route path="/create" element={<CreateSubject />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/verify" element={<Verification />} />
@@ -39,45 +60,3 @@ function App() {
 }
 
 export default App;
-
-//
-// import { useEffect, useState } from 'react'
-// import { supabase } from './supabaseClient'
-// import AuthComponent from './components/AuthComponent' // <--- IMPORT THIS
-//
-// function App() {
-//   const [session, setSession] = useState(null)
-//
-//   useEffect(() => {
-//     supabase.auth.getSession().then(({ data: { session } }) => {
-//       setSession(session)
-//     })
-//
-//     const {
-//       data: { subscription },
-//     } = supabase.auth.onAuthStateChange((_event, session) => {
-//       setSession(session)
-//     })
-//
-//     return () => subscription.unsubscribe()
-//   }, [])
-//
-//   if (!session) {
-//     // REPLACE the button with your component
-//     return (
-//       <div style={{ display: 'flex', justifyContent: 'center', marginTop: '50px' }}>
-//         <AuthComponent />
-//       </div>
-//     )
-//   }
-//   else {
-//     return (
-//       <div>
-//         <h1>Welcome, {session.user.email}</h1>
-//         <button onClick={() => supabase.auth.signOut()}>Sign Out</button>
-//       </div>
-//     )
-//   }
-// }
-//
-// export default App

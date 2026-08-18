@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
+import { motion } from "framer-motion";
 import { supabase } from "../supabaseClient";
 
 export default function ProtectedRoute() {
@@ -26,7 +27,34 @@ export default function ProtectedRoute() {
   }, []);
 
   if (loading) {
-    return <div className="p-10 text-white font-mono">Loading Session...</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper px-6">
+        <div className="flex flex-col items-center gap-5">
+          <div className="flex items-center gap-2.5" aria-hidden="true">
+            {["bg-flame", "bg-lime", "bg-cobalt"].map((color, i) => (
+              <motion.span
+                key={color}
+                className={`h-3.5 w-3.5 rounded-full border-2 border-ink ${color}`}
+                animate={{ y: [0, -10, 0] }}
+                transition={{
+                  duration: 0.7,
+                  repeat: Infinity,
+                  delay: i * 0.13,
+                  ease: "easeInOut",
+                }}
+              />
+            ))}
+          </div>
+          <p
+            role="status"
+            aria-live="polite"
+            className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-ink-45"
+          >
+            Checking your session
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (!session) {

@@ -1,66 +1,374 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter+Tight:ital,wght@0,300..800;1,400..600&family=JetBrains+Mono:wght@300..700&display=swap');
 @import "tailwindcss";
 
-:root {
-    --bg-primary: #050505;
-    --bg-secondary: #0a0a0a;
-    --text-primary: #ffffff;
-    --text-secondary: #a3a3a3;
-    --font-mono: 'JetBrains Mono', monospace;
+/* Applies only when the window is both wide AND tall enough to hold a full onboarding
+   screen. Locking a page to the viewport height on width alone clipped content on short
+   windows, cutting off the primary button. Below this, pages fall back to normal
+   scrolling, which is the correct behaviour when the content genuinely does not fit. */
+@custom-variant roomy (@media (min-width: 1024px) and (min-height: 780px));
+
+/* ==========================================================================
+   DESIGN SYSTEM — "Editorial Pop"
+   Warm paper light mode, flat vibrant accents, hard ink borders.
+   Deliberately avoids glassmorphism, blurred orbs and gradient text.
+   ========================================================================== */
+
+@theme {
+    /* --- Surfaces (warm paper, not cold grey) --- */
+    --color-paper: #fffcf7;
+    --color-paper-2: #f8f2e6;
+    --color-paper-3: #efe6d5;
+
+    /* --- Ink (warm near-black, never pure #000) --- */
+    --color-ink: #16130f;
+    --color-ink-70: #4a443a;
+    --color-ink-45: #7d766a;
+    --color-ink-25: #b3aca0;
+
+    /* --- Vibrant accents, used as flat blocks --- */
+    --color-flame: #ff5a1f;
+    --color-flame-soft: #ffe7dc;
+    --color-cobalt: #2447ff;
+    --color-cobalt-soft: #dfe4ff;
+    --color-lime: #c6f324;
+    --color-lime-soft: #f0fbc4;
+    --color-violet: #7b2ff7;
+    --color-violet-soft: #eae0ff;
+    --color-magenta: #ff2d8f;
+    --color-magenta-soft: #ffdcec;
+    --color-teal: #00bfa6;
+    --color-teal-soft: #ccf5ef;
+    --color-sun: #ffc700;
+    --color-sun-soft: #fff3c9;
+
+    /* --- Type --- */
+    --font-display: "Bricolage Grotesque", "Inter Tight", sans-serif;
+    --font-sans: "Inter Tight", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+    /* --- Hard offset shadows (no blur — this is the signature) --- */
+    --shadow-brut-xs: 2px 2px 0 0 var(--color-ink);
+    --shadow-brut-sm: 3px 3px 0 0 var(--color-ink);
+    --shadow-brut: 5px 5px 0 0 var(--color-ink);
+    --shadow-brut-lg: 8px 8px 0 0 var(--color-ink);
+    --shadow-brut-xl: 12px 12px 0 0 var(--color-ink);
+
+    /* An ink shadow behind an ink button just thickens the shape, so dark fills get a
+       muted grey offset instead — visible against both the black fill and warm paper,
+       without introducing a second accent colour. */
+    --shadow-brut-pop: 5px 5px 0 0 var(--color-ink-45);
+    --shadow-brut-pop-sm: 3px 3px 0 0 var(--color-ink-45);
+
+    /* --- Easing --- */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
 }
 
 body {
-    background-color: var(--bg-primary);
-    color: var(--text-primary);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    overflow-x: hidden;
+    margin: 0;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv01";
+    /* `clip` (not `hidden`) so position:sticky keeps working inside */
+    overflow-x: clip;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-    width: 8px;
+::selection {
+    background-color: var(--color-lime);
+    color: var(--color-ink);
 }
 
-::-webkit-scrollbar-track {
-    background: var(--bg-primary);
+h1,
+h2,
+h3,
+h4 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+    margin: 0;
+    text-wrap: balance;
 }
 
-::-webkit-scrollbar-thumb {
-    background: #333;
+p {
+    text-wrap: pretty;
+}
+
+/* Visible, high-contrast focus for keyboard users only */
+:focus-visible {
+    outline: 3px solid var(--color-cobalt);
+    outline-offset: 2px;
     border-radius: 4px;
 }
 
-/* Utility Classes */
-.glass-panel {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+    outline: none;
 }
 
-.text-gradient {
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+/* ==========================================================================
+   SCROLLBARS
+   ========================================================================== */
 
+::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
 }
 
-@keyframes gradient-x {
-    0% {
-        background-position: 0% 50%;
+::-webkit-scrollbar-track {
+    background: var(--color-paper-2);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--color-ink);
+    border: 3px solid var(--color-paper-2);
+    border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-flame);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--color-ink-25);
+    border: none;
+    border-radius: 99px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-45);
+}
+
+.scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
+/* ==========================================================================
+   COMPONENT UTILITIES
+   ========================================================================== */
+
+@utility card-brut {
+    background-color: var(--color-paper);
+    border: 2px solid var(--color-ink);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-brut);
+}
+
+/* Card that "presses into" the page on hover */
+@utility card-press {
+    border: 2px solid var(--color-ink);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-brut);
+    transition:
+        box-shadow 0.22s var(--ease-out-expo),
+        transform 0.22s var(--ease-out-expo);
+}
+
+.card-press:hover {
+    box-shadow: var(--shadow-brut-xs);
+    transform: translate(3px, 3px);
+}
+
+.card-press:active {
+    box-shadow: 0 0 0 0 var(--color-ink);
+    transform: translate(5px, 5px);
+}
+
+/* Card that lifts off the page on hover */
+@utility card-lift {
+    border: 2px solid var(--color-ink);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-brut-sm);
+    transition:
+        box-shadow 0.22s var(--ease-out-expo),
+        transform 0.22s var(--ease-out-expo);
+}
+
+.card-lift:hover {
+    box-shadow: var(--shadow-brut-lg);
+    transform: translate(-3px, -3px);
+}
+
+/* Mono eyebrow label used above section headings */
+@utility eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+/* Underline that wipes in on hover */
+@utility link-wipe {
+    position: relative;
+    text-decoration: none;
+}
+
+.link-wipe::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -2px;
+    width: 100%;
+    height: 2px;
+    background-color: currentColor;
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s var(--ease-out-expo);
+}
+
+.link-wipe:hover::after {
+    transform: scaleX(1);
+}
+
+/* Ink dot grid / graph paper backgrounds — replaces blurred orbs */
+@utility bg-dots {
+    background-image: radial-gradient(var(--color-ink-25) 1.2px, transparent 1.2px);
+    background-size: 22px 22px;
+}
+
+@utility bg-graph {
+    background-image:
+        linear-gradient(to right, rgba(22, 19, 15, 0.07) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(22, 19, 15, 0.07) 1px, transparent 1px);
+    background-size: 56px 56px;
+}
+
+/* Light-on-dark counterparts, for sections that sit on ink */
+@utility bg-dots-invert {
+    background-image: radial-gradient(rgba(255, 252, 247, 0.14) 1.2px, transparent 1.2px);
+    background-size: 24px 24px;
+}
+
+@utility bg-graph-invert {
+    background-image:
+        linear-gradient(to right, rgba(255, 252, 247, 0.06) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 252, 247, 0.06) 1px, transparent 1px);
+    background-size: 64px 64px;
+}
+
+/* Diagonal hatch fill for accent panels */
+@utility bg-hatch {
+    background-image: repeating-linear-gradient(45deg,
+            var(--color-ink) 0,
+            var(--color-ink) 1.5px,
+            transparent 1.5px,
+            transparent 9px);
+}
+
+/* Text highlighted like a marker pen */
+@utility mark-lime {
+    background-color: var(--color-lime);
+    box-shadow: 0.15em 0 0 var(--color-lime), -0.15em 0 0 var(--color-lime);
+    box-decoration-break: clone;
+}
+
+/* ==========================================================================
+   KEYFRAMES
+   ========================================================================== */
+
+@keyframes marquee-x {
+    from {
+        transform: translateX(0);
+    }
+
+    to {
+        transform: translateX(-50%);
+    }
+}
+
+.animate-marquee {
+    animation: marquee-x 32s linear infinite;
+}
+
+@keyframes spin-slow {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin-slow {
+    animation: spin-slow 14s linear infinite;
+}
+
+@keyframes float-y {
+
+    0%,
+    100% {
+        transform: translateY(0);
     }
 
     50% {
-        background-position: 100% 50%;
-    }
-
-    100% {
-        background-position: 0% 50%;
+        transform: translateY(-10px);
     }
 }
 
-.animate-gradient-x {
-    background-size: 200% auto;
-    animation: gradient-x 4s linear infinite;
+.animate-float {
+    animation: float-y 5s ease-in-out infinite;
+}
+
+@keyframes blink-dot {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.25;
+    }
+}
+
+.animate-blink {
+    animation: blink-dot 1.4s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   ACCESSIBILITY — honour the OS "reduce motion" setting
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
 }

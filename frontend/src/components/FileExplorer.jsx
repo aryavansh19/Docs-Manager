@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Folder, FileText, ChevronRight, Loader2, Download, Eye, ArrowLeft } from 'lucide-react';
+import { Folder, FileText, ChevronRight, Loader2, Eye, Home } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { API_URL } from '../lib/config';
 
+/**
+ * Standalone Drive browser.
+ *
+ * NOTE: this component is not currently mounted anywhere — Dashboard has its own
+ * browser. It is kept in sync with the design system and the authenticated API
+ * contract so it works if it is ever wired up.
+ */
 const FileExplorer = ({ rootFolderId }) => {
     // History Stack for Breadcrumbs (starts with Root)
     const [history, setHistory] = useState([{ id: rootFolderId, name: 'Home' }]);
@@ -15,22 +24,37 @@ const FileExplorer = ({ rootFolderId }) => {
     useEffect(() => {
         if (!currentFolder) return;
 
+        let cancelled = false;
         setLoading(true);
         setError(null);
 
-        axios.get(`http://localhost:8001/api/drive/browse?folder_id=${currentFolder}`, { withCredentials: true })
-            .then(res => {
+        const load = async () => {
+            try {
+                // The endpoint requires a Supabase bearer token.
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error('Not signed in');
+
+                const res = await axios.get(
+                    `${API_URL}/api/drive/browse?folder_id=${currentFolder}`,
+                    { headers: { Authorization: `Bearer ${session.access_token}` } }
+                );
+
+                if (cancelled) return;
                 setContent({
                     folders: res.data.folders || [],
-                    files: res.data.files || []
+                    files: res.data.files || [],
                 });
-                setLoading(false);
-            })
-            .catch(err => {
+            } catch (err) {
+                if (cancelled) return;
                 console.error(err);
-                setError("Failed to load folder content.");
-                setLoading(false);
-            });
+                setError('Failed to load folder content.');
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        };
+
+        load();
+        return () => { cancelled = true; };
     }, [currentFolder]);
 
     // Handle Folder Click (Drill Down)
@@ -47,98 +71,134 @@ const FileExplorer = ({ rootFolderId }) => {
     };
 
     return (
-        <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl p-6 min-h-[500px]">
+        <div className="min-h-[500px] rounded-2xl border-2 border-ink bg-paper p-6 shadow-brut">
 
             {/* 1. Breadcrumb Navigation */}
-            <div className="flex items-center gap-2 mb-6 text-sm text-slate-400 overflow-x-auto pb-2">
-                {history.map((item, index) => (
-                    <div key={item.id} className="flex items-center whitespace-nowrap">
-                        <span
-                            onClick={() => handleBreadcrumbClick(index)}
-                            className={`cursor-pointer hover:text-white transition-colors ${index === history.length - 1 ? "text-blue-400 font-bold" : ""}`}
-                        >
-                            {item.name}
-                        </span>
-                        {index < history.length - 1 && <ChevronRight size={14} className="mx-1 opacity-50" />}
-                    </div>
-                ))}
-            </div>
+            <nav aria-label="Breadcrumb" className="mb-6">
+                <ol className="scrollbar-hide flex items-center gap-1.5 overflow-x-auto pb-1">
+                    {history.map((item, index) => {
+                        const isLast = index === history.length - 1;
+                        return (
+                            <li key={item.id} className="flex shrink-0 items-center gap-1.5">
+                                {index > 0 && (
+                                    <ChevronRight size={13} className="text-ink-25" aria-hidden="true" />
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => handleBreadcrumbClick(index)}
+                                    aria-current={isLast ? 'page' : undefined}
+                                    disabled={isLast}
+                                    className={`flex items-center gap-1.5 rounded-full border-2 border-ink px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
+                                        isLast
+                                            ? 'cursor-default bg-ink text-paper'
+                                            : 'bg-paper text-ink hover:bg-lime'
+                                    }`}
+                                >
+                                    {index === 0 && <Home size={12} />}
+                                    {item.name}
+                                </button>
+                            </li>
+                        );
+                    })}
+                </ol>
+            </nav>
 
             {/* 2. Loading State */}
             {loading && (
-                <div className="h-64 flex flex-col items-center justify-center text-slate-500">
-                    <Loader2 className="animate-spin mb-2" />
-                    <p>Fetching files from Drive...</p>
+                <div className="flex h-64 items-center justify-center">
+                    <span className="flex items-center gap-2.5 rounded-full border-2 border-ink bg-paper px-5 py-2.5">
+                        <Loader2 className="animate-spin text-ink" size={15} />
+                        <span className="font-mono text-[11px] font-bold uppercase tracking-widest text-ink">
+                            Fetching from Drive
+                        </span>
+                    </span>
                 </div>
             )}
 
             {/* 3. Error State */}
             {error && !loading && (
-                <div className="text-red-400 p-4 border border-red-500/20 bg-red-500/5 rounded-lg text-center">
+                <p className="rounded-xl border-2 border-ink bg-flame-soft p-4 text-center text-sm font-bold text-ink">
                     {error}
-                </div>
+                </p>
             )}
 
-            {/* 4. Content Grid */}
+            {/* 4. Content */}
             {!loading && !error && (
                 <div className="space-y-8">
 
                     {/* FOLDERS SECTION */}
                     {content.folders.length > 0 && (
-                        <div>
-                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Folders</h3>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <section>
+                            <div className="mb-4 flex items-center gap-4">
+                                <h3 className="eyebrow text-ink-45">Folders</h3>
+                                <span className="h-0.5 flex-1 bg-ink/10" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                                 {content.folders.map(folder => (
-                                    <div
+                                    <button
                                         key={folder.id}
+                                        type="button"
                                         onClick={() => handleEnterFolder(folder)}
-                                        className="p-4 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 hover:border-blue-500/50 cursor-pointer transition-all group"
+                                        className="card-lift flex items-center gap-3 bg-lime-soft p-4 text-left"
                                     >
-                                        <div className="flex items-center gap-3">
-                                            <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400 group-hover:text-blue-300">
-                                                <Folder size={20} />
-                                            </div>
-                                            <span className="font-medium truncate text-sm">{folder.name}</span>
-                                        </div>
-                                    </div>
+                                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border-2 border-ink bg-lime text-ink">
+                                            <Folder size={17} />
+                                        </span>
+                                        <span className="truncate text-sm font-bold text-ink">
+                                            {folder.name}
+                                        </span>
+                                    </button>
                                 ))}
                             </div>
-                        </div>
+                        </section>
                     )}
 
                     {/* FILES SECTION */}
                     {content.files.length > 0 ? (
-                        <div>
-                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Files</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <section>
+                            <div className="mb-4 flex items-center gap-4">
+                                <h3 className="eyebrow text-ink-45">Files</h3>
+                                <span className="h-0.5 flex-1 bg-ink/10" />
+                            </div>
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 {content.files.map(file => (
-                                    <div key={file.id} className="p-3 bg-white/5 border border-white/5 rounded-lg flex items-center justify-between group hover:border-white/20 transition-colors">
-                                        <div className="flex items-center gap-3 overflow-hidden">
-                                            <FileText size={18} className="text-slate-400 flex-shrink-0" />
-                                            <span className="text-sm truncate text-slate-200">{file.name}</span>
-                                        </div>
+                                    <div
+                                        key={file.id}
+                                        className="flex items-center justify-between gap-3 rounded-xl border-2 border-ink bg-paper-2 p-3"
+                                    >
+                                        <span className="flex min-w-0 items-center gap-3">
+                                            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border-2 border-ink bg-flame text-paper">
+                                                <FileText size={16} />
+                                            </span>
+                                            <span className="truncate text-sm font-bold text-ink">
+                                                {file.name}
+                                            </span>
+                                        </span>
 
-                                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <a
-                                                href={file.webViewLink}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="p-2 hover:bg-white/10 rounded text-slate-400 hover:text-white"
-                                                title="Preview"
-                                            >
-                                                <Eye size={16} />
-                                            </a>
-                                        </div>
+                                        <a
+                                            href={file.webViewLink}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            title="Preview"
+                                            aria-label={`Preview ${file.name}`}
+                                            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border-2 border-ink bg-paper text-ink transition-colors hover:bg-lime"
+                                        >
+                                            <Eye size={15} />
+                                        </a>
                                     </div>
                                 ))}
                             </div>
-                        </div>
+                        </section>
                     ) : (
                         /* Empty State (Only show if no folders either) */
                         content.folders.length === 0 && (
-                            <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-2xl">
-                                <p className="text-slate-500">This folder is empty.</p>
-                                <p className="text-xs text-slate-600 mt-1">Upload a file via WhatsApp to see it here.</p>
+                            <div className="rounded-2xl border-2 border-dashed border-ink/25 py-20 text-center">
+                                <p className="font-display text-xl font-extrabold text-ink">
+                                    This folder is empty
+                                </p>
+                                <p className="mt-1.5 text-sm text-ink-45">
+                                    Forward a file via WhatsApp to see it here.
+                                </p>
                             </div>
                         )
                     )}
