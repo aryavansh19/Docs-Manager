@@ -6,6 +6,7 @@ import hmac
 import io
 import json
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from typing import Any, List
@@ -777,12 +778,98 @@ def _profile_for_phone(sender: str) -> dict[str, Any] | None:
     return response.data[0]
 
 
+# Messages that are an opening or a request for guidance rather than a search. Matched
+# against the whole normalised message, never a substring: a document really can be called
+# "Hello World", and searching for it must not be hijacked by the help menu.
+_HELP_INTENTS = frozenset({
+    "hi", "hii", "hiii", "hey", "heya", "hello", "helo", "hlo", "yo", "sup",
+    "hola", "namaste", "salam", "start", "begin", "menu", "help",
+    "commands", "command", "options", "guide", "info", "how to use", "how do i use this",
+    "how does this work", "what can you do", "what do you do", "who are you", "what is this",
+})
+
+
+def _looks_like_help_request(query: str) -> bool:
+    stripped = query.strip()
+    # A message of nothing but question marks is asking for guidance, and it survives no
+    # amount of normalisation, so it is matched before punctuation is removed.
+    if stripped and set(stripped) <= {"?"}:
+        return True
+    # Punctuation is dropped entirely so "How to use?" matches "how to use".
+    normalized = re.sub(r"[^\w\s]", "", stripped.lower())
+    return re.sub(r"\s+", " ", normalized).strip() in _HELP_INTENTS
+
+
+def _send_help_menu(sender: str, user: dict[str, Any]) -> None:
+    """Explain the service and offer the next step as tappable options.
+
+    A new user who has just sent their first file has no idea what to type next, and a
+    plain greeting used to fall through to search and come back as "Nothing matched hi".
+    """
+    folder_map = user.get("folder_map") or {}
+    file_count = 0
+    try:
+        counted = (
+            supabase.table("files")
+            .select("id", count="exact")
+            .eq("user_id", user["id"])
+            .execute()
+        )
+        file_count = counted.count or 0
+    except Exception as exc:
+        print(f"Could not count files for help menu: {exc}")
+
+    if file_count:
+        summary = f"You have *{file_count}* file{'' if file_count == 1 else 's'} saved."
+    else:
+        summary = "You have not sent me anything yet."
+
+    rows = [
+        {
+            "id": "HELP:HOWTO",
+            "title": "How to use me",
+            "description": "Send, find and organise files",
+        },
+    ]
+    if folder_map:
+        rows.append({
+            "id": "HELP:FOLDERS",
+            "title": "My folders",
+            "description": f"Browse your {len(folder_map)} subject folders",
+        })
+    if file_count:
+        rows.append({
+            "id": "HELP:RECENT",
+            "title": "Recent files",
+            "description": "The last few things you sent",
+        })
+
+    send_interactive_list(
+        sender,
+        f"Hi. I keep your documents organised in your own Google Drive.\n\n"
+        f"{summary}\n\n"
+        "*Send me* a PDF, Office file, photo or scan and I file it for you.\n"
+        "*Ask me* for anything later — just describe it in your own words.",
+        "Show me",
+        rows,
+        section_title="Get started",
+        header="DocsFlow",
+        footer="Send help any time",
+    )
+
+
 def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
     query = " ".join((query or "").split()).strip()
+
+    if _looks_like_help_request(query):
+        _send_help_menu(sender, user)
+        return
+
     if len(query) < 2:
         send_message(
             sender,
-            "Tell me a little more — a subject, topic, date, or any phrase from the document.",
+            "Tell me a little more — a subject, topic, date, or any phrase from the document.\n\n"
+            "Not sure what to say? Send *help*.",
         )
         return
 
@@ -859,7 +946,8 @@ def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
         send_message(
             sender,
             f"Nothing matched “*{query}*”.\n\n"
-            "Try a subject name, a topic from inside the file, or part of its name.",
+            "Try a subject name, a topic from inside the file, or part of its name.\n"
+            "Send *help* to see everything I can do.",
         )
         return
 
@@ -934,6 +1022,82 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("file_id", file_id).eq("user_id", user["id"]).execute()
             send_message(sender, "Left it in *Imported Documents*.")
+        return
+
+    if selected_id == "HELP:HOWTO":
+        send_message(
+            sender,
+            "*Filing something*\n"
+            "Forward any PDF, Word, Excel, PowerPoint, photo or scan. I read what is "
+            "inside, name it after its contents, and put it in the folder that fits.\n"
+            "If I am unsure, I keep it safe and ask you which folder to use.\n\n"
+            "*Finding it again*\n"
+            "Describe it however you remember it:\n"
+            "• a subject — _architecture_\n"
+            "• a topic inside it — _memory hierarchy_\n"
+            "• what a photo shows — _slippers_\n"
+            "• part of the name — _unit 3_\n\n"
+            "*Browsing*\n"
+            "Send a subject name to open that folder, or send *help* for this menu.",
+        )
+        return
+
+    if selected_id == "HELP:FOLDERS":
+        folder_map = user.get("folder_map") or {}
+        rows = []
+        for subject, data in folder_map.items():
+            if not isinstance(data, dict) or not data.get("id"):
+                continue
+            unit_count = len(data.get("units") or {})
+            rows.append({
+                "id": f"BROWSE:{data['id']}",
+                "title": subject,
+                "description": f"{unit_count} folder{'' if unit_count == 1 else 's'} inside"
+                               if unit_count else "Open this folder",
+            })
+        if not rows:
+            send_message(sender, "You have no folders yet. Finish setup on the website first.")
+            return
+        send_interactive_list(
+            sender,
+            "Pick a folder to see what is inside it.",
+            "Browse",
+            rows,
+            section_title="Your subjects",
+            header="Your folders",
+        )
+        return
+
+    if selected_id == "HELP:RECENT":
+        recent = (
+            supabase.table("files")
+            .select("id, file_name, subject, title")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .limit(9)
+            .execute()
+            .data
+        ) or []
+        if not recent:
+            send_message(sender, "You have not sent me anything yet. Forward a file and I will file it.")
+            return
+        rows = [
+            {
+                "id": f"FILEID:{row['id']}",
+                "title": row.get("title") or row["file_name"],
+                "description": row.get("subject") or "Document",
+            }
+            for row in recent
+        ]
+        send_interactive_list(
+            sender,
+            f"Your {len(rows)} most recent file{'' if len(rows) == 1 else 's'}.\n\n"
+            "Pick one and I will send it here.",
+            "See files",
+            rows,
+            section_title="Newest first",
+            header="Recent files",
+        )
         return
 
     if selected_id.startswith("BROWSE:"):
@@ -1112,9 +1276,10 @@ async def _handle_single_whatsapp_message(message: dict[str, Any], background_ta
             else:
                 send_message(
                     sender,
-                    "I cannot read that kind of message.\n\n"
+                    "I cannot read that kind of message yet.\n\n"
                     "Send a *PDF, Word, Excel, PowerPoint, photo, or scan* to file it — "
-                    "or type a few words to search what you have already saved.",
+                    "or type a few words to search what you have already saved.\n\n"
+                    "Send *help* to see everything I can do.",
                 )
     except Exception as exc:
         print(f"WhatsApp message handling failed: {exc}")
