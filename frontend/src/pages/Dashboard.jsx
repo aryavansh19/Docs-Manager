@@ -534,7 +534,7 @@ export default function Dashboard() {
                 ? "Nothing filed yet"
                 : `${activity.length} document${activity.length === 1 ? "" : "s"} filed`;
         }
-        return `${folders.length} folder${folders.length === 1 ? "" : "s"} Â· ${files.length} file${files.length === 1 ? "" : "s"}`;
+        return `${folders.length} folder${folders.length === 1 ? "" : "s"} · ${files.length} file${files.length === 1 ? "" : "s"}`;
     }, [tab, activity.length, folders.length, files.length]);
 
     const hasWorkspace = profileHasWorkspace(userData);
@@ -607,7 +607,7 @@ export default function Dashboard() {
                                 </h1>
                                 <p className="mb-6 max-w-lg text-[15px] leading-relaxed text-ink-70 xl:text-base">
                                     DocsFlow will create this folder set inside your Google Drive.
-                                    Rename, move or delete any of it afterwards â€” it&apos;s your Drive.
+                                    Rename, move or delete any of it afterwards — it&apos;s your Drive.
                                 </p>
 
                                 {buildError && (
@@ -650,11 +650,11 @@ export default function Dashboard() {
                                         </span>
                                     </div>
 
-                                    {/* manual add â€” the only way in previously was a syllabus upload */}
+                                    {/* manual add — the only way in previously was a syllabus upload */}
                                     <div className="flex shrink-0 gap-2 border-b-2 border-ink bg-paper-2 px-4 py-3">
                                         <input
                                             type="text"
-                                            placeholder="Add a folderâ€¦"
+                                            placeholder="Add a folder…"
                                             aria-label="New folder name"
                                             value={newPlanSubject}
                                             onChange={(e) => setNewPlanSubject(e.target.value)}

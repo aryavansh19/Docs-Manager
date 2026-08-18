@@ -214,7 +214,7 @@ export default function Setup() {
                                                 </span>
                                                 <span className="min-w-0">
                                                     <span className="block font-display text-base font-extrabold tracking-tight text-paper">
-                                                        {analyzing ? "Readingâ€¦" : "Upload syllabus"}
+                                                        {analyzing ? "Reading…" : "Upload syllabus"}
                                                     </span>
                                                     <span className="block text-[11px] text-paper/70">PDF or image</span>
                                                 </span>
@@ -224,7 +224,7 @@ export default function Setup() {
                                         <div className="flex gap-2 rounded-xl border-2 border-ink bg-paper-2 p-2">
                                             <input
                                                 type="text"
-                                                placeholder="Or type a subjectâ€¦"
+                                                placeholder="Or type a subject…"
                                                 aria-label="New subject name"
                                                 value={newSubject}
                                                 onChange={(e) => setNewSubject(e.target.value)}
@@ -252,7 +252,7 @@ export default function Setup() {
                                     {/* Review list */}
                                     <div className="mb-2 flex shrink-0 items-center gap-4">
                                         <h2 className="eyebrow text-ink-45">
-                                            {subjects.length > 0 ? `Will create Â· ${totalFolders} folders` : "Nothing added yet"}
+                                            {subjects.length > 0 ? `Will create · ${totalFolders} folders` : "Nothing added yet"}
                                         </h2>
                                         <span className="h-0.5 flex-1 bg-ink/10" />
                                     </div>
@@ -270,7 +270,7 @@ export default function Setup() {
                                     </div>
                                 </div>
 
-                                {/* Commit â€” pinned to the bottom of the card */}
+                                {/* Commit — pinned to the bottom of the card */}
                                 <div className="shrink-0 border-t-2 border-ink bg-paper-2 p-4 sm:p-5">
                                     <button
                                         type="button"
