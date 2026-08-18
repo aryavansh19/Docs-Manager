@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ShieldCheck, ArrowRight, Check } from "lucide-react";
 import { supabase } from "../supabaseClient";
+import { GOOGLE_OAUTH_SCOPES } from "../lib/config";
 import AuthShell from "../components/AuthShell";
 
 export default function Login() {
@@ -27,7 +28,7 @@ export default function Login() {
                         // every Drive call would keep failing.
                         prompt: 'consent select_account',
                     },
-                    scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email'
+                    scopes: GOOGLE_OAUTH_SCOPES,
                 },
             });
 

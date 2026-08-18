@@ -32,6 +32,23 @@ function resolveApiUrl() {
 
 export const API_URL = resolveApiUrl();
 
+/**
+ * Google OAuth scopes requested at sign-in.
+ *
+ * `drive.file` grants per-file access limited to files this app creates or the user
+ * explicitly opens with it — which is everything DocsFlow touches, since it creates its
+ * own workspace folder and uploads every file it manages.
+ *
+ * The full `auth/drive` scope was requested previously. Google classifies that as
+ * restricted, which makes app verification and a periodic security assessment mandatory
+ * before real users can connect. `drive.file` is non-sensitive and carries no such
+ * requirement, so this is both narrower and the only version that can ship publicly.
+ */
+export const GOOGLE_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/userinfo.email",
+].join(" ");
+
 /** WhatsApp bot number, digits only. Empty when it has not been configured. */
 export const BOT_NUMBER = (import.meta.env.VITE_BOT_NUMBER ?? "").trim();
 

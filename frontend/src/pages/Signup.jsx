@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Phone, ArrowRight, ShieldCheck } from "lucide-react";
 import { supabase } from "../supabaseClient";
+import { GOOGLE_OAUTH_SCOPES } from "../lib/config";
 import AuthShell from "../components/AuthShell";
 
 export default function Signup() {
@@ -31,7 +32,7 @@ export default function Signup() {
                         access_type: 'offline', // Forces Google to give us a Refresh Token
                         prompt: 'consent',
                     },
-                    scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email'
+                    scopes: GOOGLE_OAUTH_SCOPES,
                 },
             });
 
