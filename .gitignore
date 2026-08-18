@@ -34,6 +34,7 @@ htmlcov/
 # Local tooling and generated output
 .idea/
 .vscode/
+.kiro/
 *.log
 *.tmp
 *.temp
