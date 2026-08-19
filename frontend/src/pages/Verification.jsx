@@ -364,6 +364,17 @@ const Verify = () => {
                             This page updates itself the moment the bot hears from you — no
                             need to refresh.
                         </p>
+
+                        {/* A wrong number can never receive the verification message, and
+                            without this the account was stranded here permanently. */}
+                        {!verified && phone && (
+                            <p className="mt-2 shrink-0 px-1 text-[12px] leading-relaxed text-ink-45">
+                                Wrong number?{" "}
+                                <Link to="/signup?notice=change_number" className="font-bold text-ink underline">
+                                    Link a different one
+                                </Link>
+                            </p>
+                        )}
                     </motion.div>
                 </div>
             </div>

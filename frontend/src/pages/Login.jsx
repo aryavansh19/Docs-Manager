@@ -1,11 +1,20 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { ShieldCheck, ArrowRight, Check } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { ShieldCheck, ArrowRight, Check, AlertCircle } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { GOOGLE_OAUTH_SCOPES } from "../lib/config";
 import AuthShell from "../components/AuthShell";
 
+// Reasons AuthCallback can bounce someone back here. Without these the redirect carried
+// an ?error= param that nothing rendered, so the user saw no explanation at all.
+const NOTICES = {
+    auth_failed: "Google sign-in did not complete. Please try again.",
+    account_not_found: "No DocsFlow account exists for that Google account yet.",
+};
+
 export default function Login() {
+    const [searchParams] = useSearchParams();
+    const notice = NOTICES[searchParams.get("error")];
     const [isLoading, setIsLoading] = useState(false);
 
     const handleGoogleLogin = async () => {
@@ -67,6 +76,21 @@ export default function Login() {
                     Sign in with the Google account you connected. We match your workspace
                     by email — nothing else to remember.
                 </p>
+
+                {notice && (
+                    <div
+                        role="status"
+                        className="mb-8 flex items-start gap-3 rounded-xl border-2 border-ink bg-flame-soft px-4 py-3.5"
+                    >
+                        <AlertCircle size={17} className="mt-0.5 shrink-0 text-ink" aria-hidden="true" />
+                        <p className="text-[13.5px] font-medium leading-relaxed text-ink">
+                            {notice}{" "}
+                            <Link to="/signup" className="font-bold underline">
+                                Create an account
+                            </Link>
+                        </p>
+                    </div>
+                )}
 
                 <ul className="mb-8 space-y-2.5 rounded-xl border-2 border-ink bg-paper-2 p-5">
                     {[

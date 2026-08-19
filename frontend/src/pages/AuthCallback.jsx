@@ -45,8 +45,11 @@ export default function AuthCallback() {
                 });
 
                 if (rpcError || !data?.success) {
-                    console.error("Linking Failed:", rpcError);
-                    navigate("/signup?error=linking_failed");
+                    console.error("Linking Failed:", rpcError || data?.error);
+                    // Pass the specific reason through so the form can explain what to
+                    // fix — "invalid_phone" and "phone_in_use" need different actions.
+                    const reason = data?.error || "linking_failed";
+                    navigate(`/signup?notice=${encodeURIComponent(reason)}`);
                     return;
                 }
                 dbResult = data;
@@ -61,9 +64,15 @@ export default function AuthCallback() {
                 });
 
                 if (rpcError || !data?.success) {
-                    // Account not found -> Sign out & Redirect to Login
+                    // Signing in with Google succeeds for anyone, so "no account" is a
+                    // normal outcome here, not an error. Sending them to /login used to
+                    // drop them on a page with no explanation and no way forward, so send
+                    // them where they actually need to go and say why.
                     await supabase.auth.signOut();
-                    navigate("/login?error=account_not_found");
+                    const reason = data?.error === "account_not_found" || !data?.error
+                        ? "no_account"
+                        : data.error;
+                    navigate(`/signup?notice=${encodeURIComponent(reason)}`);
                     return;
                 }
                 dbResult = data;
