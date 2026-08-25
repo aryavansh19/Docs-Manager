@@ -1,0 +1,22 @@
+[Unit]
+Description=DocsFlow FastAPI backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/docsflow/backend
+EnvironmentFile=/home/ubuntu/docsflow/backend/.env
+Environment=HOME=/home/ubuntu
+Environment=XDG_CACHE_HOME=/home/ubuntu/.cache
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/docsflow/backend/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

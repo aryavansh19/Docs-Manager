@@ -9,6 +9,17 @@
  */
 
 /**
+ * Profile columns the browser is allowed to read.
+ *
+ * Deliberately excludes `google_token`, which holds a long-lived Google refresh token.
+ * `select("*")` used to pull it into the client on every dashboard load, putting a
+ * credential that grants Drive access within reach of any XSS or hostile extension.
+ * The database now revokes column access as well, so selecting "*" would fail outright.
+ */
+export const PROFILE_COLUMNS =
+    "id, name, phone, avatar_url, status, whatsapp_verified, root_folder_id, folder_map, temp_syllabus_list";
+
+/**
  * Has the user opened a WhatsApp conversation with the bot?
  *
  * Only `whatsapp_verified` can answer this. `status` cannot: the folder-creation

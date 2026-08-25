@@ -10,7 +10,7 @@ import {
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { supabase } from "../supabaseClient";
 import { API_URL, botWhatsAppLink } from "../lib/config";
-import { isWhatsAppVerified, hasWorkspace as profileHasWorkspace } from "../lib/profile";
+import { isWhatsAppVerified, hasWorkspace as profileHasWorkspace, PROFILE_COLUMNS } from "../lib/profile";
 import FolderBuildCeremony from "../components/FolderBuildCeremony";
 import SubjectTree from "../components/SubjectTree";
 
@@ -397,7 +397,7 @@ export default function Dashboard() {
         if (!user) { window.location.href = "/login"; return null; }
 
         const { data: profile } = await supabase
-            .from("profiles").select("*").eq("id", user.id).single();
+            .from("profiles").select(PROFILE_COLUMNS).eq("id", user.id).single();
 
         // Hard gate: the folder worker sends a business-initiated WhatsApp
         // message, which Meta only allows inside the 24h window a user-initiated

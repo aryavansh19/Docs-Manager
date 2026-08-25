@@ -5,6 +5,7 @@ import { supabase } from "../supabaseClient";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Plus, Loader2, ArrowLeft, FolderTree, Check, Upload } from "lucide-react";
 import { API_URL } from "../lib/config";
+import { PROFILE_COLUMNS } from "../lib/profile";
 import FolderBuildCeremony from "../components/FolderBuildCeremony";
 
 import SubjectTree from "../components/SubjectTree";
@@ -29,7 +30,11 @@ export default function Setup() {
         const load = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) { navigate("/login"); return; }
-            const { data } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+            const { data } = await supabase
+                .from("profiles")
+                .select(PROFILE_COLUMNS)
+                .eq("id", user.id)
+                .single();
             setProfile(data);
             setLoading(false);
         };
@@ -116,10 +121,16 @@ export default function Setup() {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("Not signed in");
 
-            await supabase
-                .from("profiles")
-                .update({ temp_syllabus_list: payload, status: "AWAITING_FOLDERS" })
-                .eq("id", session.user.id);
+            // Staging the draft advances `status`, which the browser may no longer write
+            // directly: an unrestricted update was a route to ACTIVE without ever
+            // verifying WhatsApp. The function validates the transition instead.
+            const { data: staged, error: stageError } = await supabase.rpc(
+                "save_syllabus_draft",
+                { subjects: payload },
+            );
+            if (stageError || !staged?.success) {
+                throw new Error(staged?.error || stageError?.message || "Could not save your folder plan");
+            }
 
             setBuilding(true);
 

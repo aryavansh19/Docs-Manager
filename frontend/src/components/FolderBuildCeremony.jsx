@@ -5,6 +5,7 @@ import {
     HardDrive, RotateCcw, ArrowRight, Sparkles
 } from "lucide-react";
 import { supabase } from "../supabaseClient";
+import { PROFILE_COLUMNS } from "../lib/profile";
 
 /**
  * Live progress for Drive folder creation.
@@ -170,7 +171,7 @@ export default function FolderBuildCeremony({
         // Realtime can drop a message; poll as a safety net.
         pollId = window.setInterval(async () => {
             const { data } = await supabase
-                .from("profiles").select("*").eq("id", userId).single();
+                .from("profiles").select(PROFILE_COLUMNS).eq("id", userId).single();
             if (isDone(data)) settle(data);
         }, 4000);
 
