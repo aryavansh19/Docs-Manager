@@ -22,10 +22,12 @@ grant update (name, avatar_url) on public.profiles to authenticated;
 -- Enumerated dynamically so a future column is exposed deliberately, not by omission.
 do $$
 declare
-    column_name text;
+    -- Deliberately not named column_name: that would shadow the information_schema
+    -- column of the same name inside the query below.
+    target_column text;
 begin
     revoke select on public.profiles from authenticated, anon;
-    for column_name in
+    for target_column in
         select c.column_name
         from information_schema.columns c
         where c.table_schema = 'public'
@@ -34,7 +36,7 @@ begin
         order by c.ordinal_position
     loop
         execute format(
-            'grant select (%I) on public.profiles to authenticated', column_name
+            'grant select (%I) on public.profiles to authenticated', target_column
         );
     end loop;
 end $$;
