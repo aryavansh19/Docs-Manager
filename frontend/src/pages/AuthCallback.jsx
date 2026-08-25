@@ -46,6 +46,13 @@ export default function AuthCallback() {
 
                 if (rpcError || !data?.success) {
                     console.error("Linking Failed:", rpcError || data?.error);
+                    // Signing in with Google always succeeds, so a failed link leaves an
+                    // auth user with no profile row behind it. Without this sign-out that
+                    // half-made session stays live: the browser looks signed in, but every
+                    // later lookup answers "account_not_found", so the user gets bounced to
+                    // /signup on every visit with no way to tell what went wrong. Drop the
+                    // session so a retry starts clean, exactly like the no-account branch.
+                    await supabase.auth.signOut();
                     // Pass the specific reason through so the form can explain what to
                     // fix — "invalid_phone" and "phone_in_use" need different actions.
                     const reason = data?.error || "linking_failed";
