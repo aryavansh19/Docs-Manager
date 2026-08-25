@@ -12,11 +12,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
         // tabs, and browser restarts.
         persistSession: true,
         autoRefreshToken: true,
-        // The OAuth redirect comes back with the code in the URL; this is what exchanges
-        // it for a session before AuthCallback reads it.
+        // The OAuth redirect comes back carrying the credential in the URL; this is what
+        // turns it into a session before AuthCallback reads it.
         detectSessionInUrl: true,
-        flowType: 'pkce',
-        // storageKey is deliberately left at its default. Changing it would orphan every
-        // session already stored in a user's browser and sign everyone out.
+        // flowType and storageKey are both deliberately left at their defaults.
+        // Setting flowType would change the OAuth handshake itself, which is working, and
+        // changing storageKey would orphan every session already stored in a user's
+        // browser and sign everyone out.
     },
 })
