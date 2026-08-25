@@ -10,11 +10,15 @@ import AuthShell from "../components/AuthShell";
 const NOTICES = {
     auth_failed: "Google sign-in did not complete. Please try again.",
     account_not_found: "No DocsFlow account exists for that Google account yet.",
+    reconnect: "DocsFlow lost access to your Google Drive. Approve access once more to reconnect it.",
 };
 
 export default function Login() {
     const [searchParams] = useSearchParams();
-    const notice = NOTICES[searchParams.get("error")];
+    // ?reconnect=1 is the deliberate re-consent path; it should explain itself even though
+    // it arrives as a different param than the error notices above.
+    const reconnect = searchParams.get("reconnect") === "1";
+    const notice = reconnect ? NOTICES.reconnect : NOTICES[searchParams.get("error")];
     const [isLoading, setIsLoading] = useState(false);
 
     const handleGoogleLogin = async () => {
@@ -30,12 +34,21 @@ export default function Login() {
                 options: {
                     redirectTo: redirectUrl,
                     queryParams: {
+                        // Still ask for offline access, so a first-time grant returns a
+                        // refresh token without us having to force the consent screen.
                         access_type: 'offline',
-                        // Google only issues a new refresh token when consent is granted
-                        // again. With select_account, a returning user gets no refresh
-                        // token, so an expired or revoked one could never be replaced and
-                        // every Drive call would keep failing.
-                        prompt: 'consent select_account',
+                        // Google re-shows its consent screen every single time we send
+                        // prompt=consent, which is why returning users were re-approving
+                        // access on every login. Signup already asks for consent once, and
+                        // that grant is what produced the refresh token we store, so a
+                        // normal login has nothing left to ask for.
+                        //
+                        // The concern behind the old behaviour is real though: Google only
+                        // issues a refresh token when consent is granted, so a plain login
+                        // cannot replace one that expired or was revoked. That recovery is
+                        // now explicit rather than charged to every login -- send the user
+                        // to /login?reconnect=1 and consent is requested again.
+                        prompt: reconnect ? 'consent select_account' : 'select_account',
                     },
                     scopes: GOOGLE_OAUTH_SCOPES,
                 },
