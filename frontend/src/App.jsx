@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
+import { Analytics } from "@vercel/analytics/react";
 import FloatingNav from "./components/FloatingNav";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
@@ -12,6 +13,50 @@ import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from "./components/ProtectedRoute";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
+
+/**
+ * Query params that are safe to send to analytics. Everything else is dropped.
+ *
+ * This is an allowlist rather than a blocklist on purpose. Analytics records the URL of
+ * every pageview, and some of our URLs carry things that must never leave the browser:
+ * /auth/callback is reached with ?phone=<the user's WhatsApp number> during signup, and
+ * Google redirects back with the OAuth credential in the URL. A blocklist would only stop
+ * the cases we thought of today; an allowlist stops anything a future route adds too.
+ *
+ * The campaign params stay so we can still tell where traffic came from, which is the
+ * whole reason for adding analytics.
+ */
+const ANALYTICS_SAFE_PARAMS = new Set([
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "utm_term",
+    "ref",
+]);
+
+/**
+ * Strips anything sensitive out of a pageview URL before it is sent.
+ *
+ * The hash is always removed. Supabase's default OAuth flow returns the access token in
+ * the fragment (#access_token=...), so keeping it would mean posting session tokens to a
+ * third party. Returning null cancels the event entirely, which is what we do if the URL
+ * cannot be parsed, on the grounds that an unsendable event is better than a leaky one.
+ */
+function scrubAnalyticsUrl(event) {
+    try {
+        const url = new URL(event.url);
+        for (const key of Array.from(url.searchParams.keys())) {
+            if (!ANALYTICS_SAFE_PARAMS.has(key)) {
+                url.searchParams.delete(key);
+            }
+        }
+        url.hash = "";
+        return { ...event, url: url.toString() };
+    } catch {
+        return null;
+    }
+}
 
 /**
  * Resets scroll on navigation, and honours in-page hash targets
@@ -37,6 +82,7 @@ function ScrollManager() {
 function App() {
   return (
     <>
+      <Analytics beforeSend={scrubAnalyticsUrl} />
       <ScrollManager />
       <FloatingNav />
       <Routes>
