@@ -1,4 +1,4 @@
-import { Github, Twitter, Linkedin, Mail, ArrowUpRight, MessageSquare } from "lucide-react";
+import { Twitter, Linkedin, Mail, ArrowUpRight, MessageSquare } from "lucide-react";
 import { Link } from "react-router-dom";
 import { VelocityMarquee, Reveal } from "../lib/motion";
 import { botWhatsAppLink } from "../lib/config";
@@ -25,7 +25,6 @@ const COLUMNS = [
 ];
 
 const SOCIALS = [
-    { icon: Github, label: "GitHub", href: "https://github.com/aryavansh19" },
     { icon: Twitter, label: "Twitter", href: "#" },
     { icon: Linkedin, label: "LinkedIn", href: "#" },
     { icon: Mail, label: "Email", href: "mailto:support@docsflow.com" },
