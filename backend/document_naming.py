@@ -62,11 +62,15 @@ def _gemini_key() -> str:
 
 
 def _groq_model() -> str:
-    return os.getenv("GROQ_NAMING_MODEL", "llama-3.3-70b-versatile")
+    # Chosen off the live model list rather than from memory: this account serves no Llama
+    # models at all, and a retired name returns 404 on every call.
+    return os.getenv("GROQ_NAMING_MODEL", "openai/gpt-oss-120b")
 
 
 def _gemini_model() -> str:
-    return os.getenv("GEMINI_NAMING_MODEL", "gemini-2.0-flash")
+    # Flash-lite is enough for naming, and it accepts images, which is the whole reason
+    # Gemini is in the routing at all.
+    return os.getenv("GEMINI_NAMING_MODEL", "gemini-3.5-flash-lite")
 
 
 @dataclass(slots=True)
@@ -250,8 +254,13 @@ def _describe_with_gemini(
 
     response = requests.post(
         GEMINI_ENDPOINT.format(model=_gemini_model()),
-        headers={"Content-Type": "application/json"},
-        params={"key": _gemini_key()},
+        # The key goes in a header, never in the query string. Gemini accepts ?key=, but
+        # requests puts the full URL into HTTPError messages, so a single 404 would write
+        # the API key into the service journal and into any error we print or report.
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": _gemini_key(),
+        },
         json={
             "systemInstruction": {"parts": [{"text": _SYSTEM_INSTRUCTION}]},
             "contents": [{"role": "user", "parts": parts}],
