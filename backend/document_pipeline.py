@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from document_naming import describe_document
+
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 # Cross-encoder used to rescore retrieval candidates. It reads the query and the
@@ -1015,13 +1017,61 @@ def _title_from_text(text: str, filename: str) -> str:
     return stem[:120] or "Document"
 
 
+def _extract_entities(text: str) -> dict[str, list[str]]:
+    """Pull emails and dates out with regex regardless of who wrote the title.
+
+    Kept out of the model's hands on purpose: this is exact-match extraction, where a regex
+    is both cheaper and more reliable than asking a model to copy strings accurately.
+    """
+    return {
+        "emails": sorted(set(re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text)))[:10],
+        "dates": sorted(set(re.findall(
+            r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{2,4})\b",
+            text,
+            flags=re.IGNORECASE,
+        )))[:20],
+    }
+
+
 def build_metadata(
     extracted: ExtractedDocument,
     filename: str,
     mime_type: str,
     image_data: bytes | None = None,
+    use_llm: bool = True,
 ) -> DocumentMetadata:
     text = extracted.text
+
+    # Ask a model what this document is before falling back to heuristics.
+    #
+    # The heuristics below are pattern matching: the biggest-font OCR region, the first line
+    # in reading order, and a CLIP label chosen from a fixed list. They are why a photo of a
+    # slipper was filed as "medical prescription" -- CLIP picks the nearest available label,
+    # so anything outside the list is named wrongly and confidently.
+    #
+    # Best-effort by design. describe_document swallows its own failures and returns None,
+    # in which case nothing changes and the original heuristics run exactly as before. A
+    # missing API key is therefore not an error, just the old behaviour.
+    if use_llm:
+        described = describe_document(text=text, mime_type=mime_type, image_data=image_data)
+        if described:
+            # The model's keywords come first because they are chosen for recall, but the
+            # extracted ones are kept behind them: they are drawn from the literal text and
+            # sometimes catch a code or number the model paraphrased away.
+            keywords = list(described.keywords)
+            for keyword in _extract_keywords(f"{described.title}\n{text}", limit=8):
+                if keyword not in keywords:
+                    keywords.append(keyword)
+            summary = described.summary or re.sub(r"\s+", " ", text).strip()[:600]
+            return DocumentMetadata(
+                title=described.title,
+                summary=summary[:600],
+                document_type=described.document_type
+                              or _guess_document_type(text, mime_type, filename),
+                keywords=keywords[:20],
+                entities=_extract_entities(text),
+                language="en" if text and sum(ch.isascii() for ch in text) / max(len(text), 1) > 0.85 else "unknown",
+            )
 
     # A photograph yields little or no OCR text, so fall back to visual labelling.
     # Sparse text is treated the same as none, because photos frequently produce a few
@@ -1056,14 +1106,7 @@ def build_metadata(
     summary = re.sub(r"\s+", " ", summary_source).strip()[:600]
     keywords = _extract_keywords(f"{title}\n{text}")
 
-    entities = {
-        "emails": sorted(set(re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text)))[:10],
-        "dates": sorted(set(re.findall(
-            r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{2,4})\b",
-            text,
-            flags=re.IGNORECASE,
-        )))[:20],
-    }
+    entities = _extract_entities(text)
     return DocumentMetadata(
         title=title,
         summary=summary,
