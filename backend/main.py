@@ -22,7 +22,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from document_ingestion import apply_classification_choice, ingest_and_index_document
+from document_ingestion import apply_classification_choice, ingest_and_index_document, rename_document
 from document_pipeline import MAX_FILE_BYTES, detect_mime_type
 from drive_search import (
     find_folder_match,
@@ -143,6 +143,32 @@ def send_buttons(to: str, text: str, buttons: list[dict[str, str]]) -> bool:
     except requests.RequestException as exc:
         print(f"WhatsApp button send failed: {exc}")
         return False
+
+
+def send_buttons_or_text(to: str, text: str, buttons: list[dict[str, str]]) -> bool:
+    """Offer tappable buttons, but never lose the message itself if they fail.
+
+    Interactive messages are not available on every WhatsApp Business account, and the
+    confirmation that a file was saved matters far more than the buttons offering to
+    rename it. Mirrors how send_link degrades.
+    """
+    if send_buttons(to, text, buttons):
+        return True
+    return send_message(to, text)
+
+
+def _rename_buttons(file_id: str) -> list[dict[str, str]]:
+    """The two options offered after a file is filed.
+
+    An automatic name is a guess, and the sender is the only one who knows whether it
+    guessed right. Asking in the same message means correcting it costs one tap instead of
+    a trip to Drive. Titles are kept short because WhatsApp truncates them at 20
+    characters.
+    """
+    return [
+        {"id": f"RENAME:{file_id}", "title": "Rename"},
+        {"id": f"KEEPNAME:{file_id}", "title": "Looks good"},
+    ]
 
 
 def send_link(to: str, text: str, button_text: str, url: str) -> bool:
@@ -638,6 +664,7 @@ def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
             data=data,
             claimed_mime_type=claimed_mime_type,
             original_filename=job["original_filename"],
+            caption=job.get("caption"),
             ingestion_job_id=job_id,
             lease_guard=lease_guard,
         )
@@ -661,11 +688,14 @@ def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
                 f"It is saved as *{outcome.file_name}* in {outcome.folder_label}.",
             )
         elif outcome.extraction_status not in {"complete", "visual_only"}:
-            send_message(
+            # Nothing could be read out of this one, so its name is the only way back to
+            # it. That makes offering a rename more important here than anywhere else.
+            send_buttons_or_text(
                 job["sender"],
                 f"Saved *{outcome.file_name}* to Imported Documents.\n\n"
                 "I could not read any text inside it, so searching by content will not find "
                 "it — only by name.",
+                _rename_buttons(outcome.file_id),
             )
         elif outcome.classification_status == "needs_confirmation" and outcome.alternatives:
             buttons = [
@@ -687,7 +717,11 @@ def _process_claimed_ingestion_job(job: dict[str, Any]) -> None:
             lines = [f"Saved *{outcome.file_name}* to {outcome.folder_label}."]
             if keywords:
                 lines.append(f"\nFind it later with: {keywords}")
-            send_message(job["sender"], "\n".join(lines))
+            send_buttons_or_text(
+                job["sender"],
+                "\n".join(lines),
+                _rename_buttons(outcome.file_id),
+            )
     except Exception as exc:
         print(f"Ingestion attempt failed for {job_id}: {exc}")
         failure = supabase.table("ingestion_jobs").update({
@@ -722,6 +756,7 @@ def enqueue_ingestion_job(
     media_id: str,
     message_type: str,
     original_filename: str,
+    caption: str | None = None,
 ) -> str | None:
     existing = (
         supabase.table("ingestion_jobs")
@@ -740,6 +775,9 @@ def enqueue_ingestion_job(
         "media_id": media_id,
         "message_type": message_type,
         "original_filename": original_filename,
+        # Stored rather than used immediately: ingestion runs in a background worker that
+        # only receives the job row, so the caption has to survive the handoff.
+        "caption": caption,
         "status": "queued",
     }).execute().data
     return inserted[0]["id"] if inserted else None
@@ -769,7 +807,8 @@ async def start_ingestion_worker():
 
 def _profile_for_phone(sender: str) -> dict[str, Any] | None:
     response = supabase.table("profiles").select(
-        "id, phone, status, whatsapp_verified, google_token, root_folder_id, folder_map"
+        "id, phone, status, whatsapp_verified, google_token, root_folder_id, folder_map, "
+        "pending_action"
     ).eq("phone", sender).limit(2).execute()
     if len(response.data or []) != 1:
         if response.data:
@@ -977,6 +1016,84 @@ def _handle_text_search(sender: str, user: dict[str, Any], query: str) -> None:
     )
 
 
+# How long a "Rename" tap stays armed. Long enough to think of a name, short enough that a
+# tap someone forgot about cannot silently swallow tomorrow's search query.
+PENDING_RENAME_TTL_SECONDS = 15 * 60
+
+_RENAME_CANCEL_WORDS = frozenset({
+    "cancel", "no", "nope", "nevermind", "never mind", "skip", "stop", "leave it",
+    "leave it as it is", "keep it", "its fine", "it is fine", "fine",
+})
+
+
+def _set_pending_rename(user_id: str, file_id: str) -> None:
+    supabase.table("profiles").update({
+        "pending_action": {
+            "type": "rename",
+            "file_id": file_id,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+    }).eq("id", user_id).execute()
+
+
+def _clear_pending_action(user_id: str) -> None:
+    supabase.table("profiles").update({"pending_action": None}).eq("id", user_id).execute()
+
+
+def _pending_rename_file_id(user: dict[str, Any]) -> str | None:
+    """The file this sender tapped Rename on, if that tap is still fresh.
+
+    Read from the profile row that was already fetched for this message, so the common
+    case — no pending rename — costs no extra query on the search path.
+    """
+    pending = user.get("pending_action")
+    if not isinstance(pending, dict) or pending.get("type") != "rename":
+        return None
+    file_id = pending.get("file_id")
+    if not file_id:
+        return None
+    try:
+        armed_at = datetime.fromisoformat(str(pending.get("at")))
+    except (TypeError, ValueError):
+        return None
+    if armed_at.tzinfo is None:
+        armed_at = armed_at.replace(tzinfo=timezone.utc)
+    if (datetime.now(timezone.utc) - armed_at).total_seconds() > PENDING_RENAME_TTL_SECONDS:
+        return None
+    return str(file_id)
+
+
+def _handle_rename_reply(sender: str, user: dict[str, Any], file_id: str, text: str) -> None:
+    """Treat this message as the new name for the file awaiting a rename.
+
+    The pending action is cleared on every path, including failures: leaving it set would
+    trap the sender in rename mode, where their next search would be read as a filename.
+    """
+    typed = (text or "").strip()
+    normalized = re.sub(r"[^\w\s]", "", typed.lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    _clear_pending_action(user["id"])
+
+    if not typed or normalized in _RENAME_CANCEL_WORDS:
+        send_message(sender, "Left the name as it is.")
+        return
+
+    try:
+        new_name = rename_document(user, file_id, typed)
+    except ValueError as exc:
+        send_message(sender, f"I could not rename it: {exc}.")
+        return
+    except Exception as exc:
+        print(f"Rename failed: {exc}")
+        send_message(
+            sender,
+            "Renaming did not go through. The file is still saved under its old name.",
+        )
+        return
+
+    send_message(sender, f"Renamed it to *{new_name}*.")
+
+
 def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str, Any]) -> None:
     interaction_type = interaction.get("type")
     if interaction_type == "button_reply":
@@ -1022,6 +1139,29 @@ def _handle_interaction(sender: str, user: dict[str, Any], interaction: dict[str
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("file_id", file_id).eq("user_id", user["id"]).execute()
             send_message(sender, "Left it in *Imported Documents*.")
+        return
+
+    if selected_id.startswith("RENAME:"):
+        file_id = selected_id.removeprefix("RENAME:")
+        owned = get_owned_file(user["id"], file_id=file_id)
+        if not owned:
+            send_message(sender, "I cannot find that file any more.")
+            return
+        _set_pending_rename(user["id"], file_id)
+        send_message(
+            sender,
+            f"It is currently *{owned.get('file_name')}*.\n\n"
+            "Send the new name as your next message and I will rename it in Drive. "
+            "Keep the extension out of it — I will put that back.\n\n"
+            "Send *cancel* to leave it alone.",
+        )
+        return
+
+    if selected_id.startswith("KEEPNAME:"):
+        # Tapping a button posts it into the chat as if the sender said it, so staying
+        # silent here reads as being ignored.
+        _clear_pending_action(user["id"])
+        send_message(sender, "Good — leaving the name as it is.")
         return
 
     if selected_id == "HELP:HOWTO":
@@ -1241,12 +1381,16 @@ async def _handle_single_whatsapp_message(message: dict[str, Any], background_ta
             )
         elif status == "ACTIVE" and user:
             if message_type == "text":
-                await asyncio.to_thread(
-                    _handle_text_search,
-                    sender,
-                    user,
-                    message.get("text", {}).get("body", ""),
-                )
+                text_body = message.get("text", {}).get("body", "")
+                # A pending rename claims the next message, otherwise the name the sender
+                # types would be run as a search query instead.
+                pending_rename = _pending_rename_file_id(user)
+                if pending_rename:
+                    await asyncio.to_thread(
+                        _handle_rename_reply, sender, user, pending_rename, text_body
+                    )
+                else:
+                    await asyncio.to_thread(_handle_text_search, sender, user, text_body)
             elif message_type == "interactive":
                 await asyncio.to_thread(_handle_interaction, sender, user, message.get("interactive") or {})
             elif message_type in {"document", "image"}:
@@ -1257,6 +1401,10 @@ async def _handle_single_whatsapp_message(message: dict[str, Any], background_ta
                     if message_type == "document"
                     else f"image_{message['id']}.jpg"
                 )
+                # WhatsApp puts any text typed alongside the attachment here. It is the
+                # only description of the file the sender writes themselves, so it ends up
+                # naming the file.
+                caption = media.get("caption")
                 if media_id:
                     try:
                         job_id = enqueue_ingestion_job(
@@ -1266,6 +1414,7 @@ async def _handle_single_whatsapp_message(message: dict[str, Any], background_ta
                             media_id,
                             message_type,
                             filename,
+                            caption,
                         )
                     except Exception as exc:
                         print(f"Could not enqueue ingestion: {exc}")

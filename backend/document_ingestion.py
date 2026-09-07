@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from googleapiclient.http import MediaIoBaseUpload
@@ -19,6 +20,7 @@ from document_pipeline import (
     is_placeholder_filename,
     safe_filename,
     sha256_bytes,
+    usable_caption,
 )
 from google_auth import get_drive_service
 from supabase_client import supabase
@@ -81,6 +83,7 @@ def ingest_and_index_document(
     data: bytes,
     claimed_mime_type: str | None,
     original_filename: str,
+    caption: str | None = None,
     ingestion_job_id: str | None = None,
     lease_guard: Callable[[], bool] | None = None,
 ) -> IngestionOutcome:
@@ -128,8 +131,17 @@ def ingest_and_index_document(
         image_data=data,
     )
 
-    # Name the file after what it contains, now that the content has been read.
-    if invented_name:
+    # Name the file, now that both the caption and the content have been read.
+    #
+    # The caption outranks everything, including a real filename the sender's phone
+    # supplied. It is the one description typed deliberately about this document, at the
+    # moment of sending, and it is the wording the sender will search for later. A photo
+    # captioned "physics unit 3" beats the image model's "Photo of handwritten text", and
+    # a scan captioned "physics unit 3" beats "Scan_20260101.pdf".
+    caption_label = usable_caption(caption)
+    if caption_label:
+        file_name = descriptive_filename(caption_label, mime_type, fallback=file_name)
+    elif invented_name:
         file_name = descriptive_filename(metadata.title, mime_type, fallback=file_name)
 
     # An image with no readable text but a recognised subject is still searchable, so it
@@ -149,6 +161,8 @@ def ingest_and_index_document(
         # The embedding model has a 512-token window, so a long body was silently
         # truncated and contributed nothing. Chunk vectors cover the body instead.
         document_embedding_input = "\n".join(filter(None, [
+            # First, so the sender's own wording carries the most weight in the vector.
+            caption_label,
             metadata.title,
             (metadata.document_type or "").replace("_", " "),
             " ".join(metadata.keywords[:20]),
@@ -369,3 +383,66 @@ def apply_classification_choice(user: dict[str, Any], file_id: str, candidate_in
     except Exception as exc:
         print(f"Could not record classification feedback: {exc}")
     return candidate.get("label") or candidate.get("subject") or "selected folder"
+
+
+def rename_document(user: dict[str, Any], file_id: str, requested_name: str) -> str:
+    """Rename a saved file in Drive and in the index, returning the name that stuck.
+
+    The extension always comes from the stored name rather than from what was typed. The
+    sender is naming the document, not choosing its format, so "Physics unit 3" must not
+    leave a Drive file with no extension: trigger_file_send re-uploads to WhatsApp using
+    this name, and WhatsApp needs the extension to send it back as the right kind of
+    attachment.
+    """
+    response = (
+        supabase.table("files")
+        .select("id, drive_file_id, file_name, mime_type")
+        .eq("id", file_id)
+        .eq("user_id", user["id"])
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        raise ValueError("File not found")
+
+    file_row = response.data[0]
+    mime_type = file_row.get("mime_type") or ""
+    # usable_caption also strips "save this as ..." lead-ins, which people type when
+    # replying with a new name just as often as when captioning a photo.
+    cleaned = safe_filename(usable_caption(requested_name) or requested_name, mime_type)
+    stem = Path(cleaned).stem.strip()
+    if not stem:
+        raise ValueError("That name is empty")
+
+    previous_name = file_row.get("file_name") or ""
+    extension = Path(previous_name).suffix or Path(cleaned).suffix
+    new_name = f"{stem}{extension}"
+    if new_name == previous_name:
+        return previous_name
+
+    drive_service = get_drive_service(user["google_token"]["refresh_token"])
+    drive_service.files().update(
+        fileId=file_row["drive_file_id"],
+        body={"name": new_name},
+        fields="id, name",
+    ).execute()
+
+    try:
+        supabase.table("files").update({"file_name": new_name}).eq("id", file_id).eq(
+            "user_id", user["id"]
+        ).execute()
+    except Exception:
+        # Drive has already accepted the new name. Put the old one back so the two stores
+        # cannot disagree about what this file is called: search reads the index, and the
+        # sender reads Drive.
+        try:
+            drive_service.files().update(
+                fileId=file_row["drive_file_id"],
+                body={"name": previous_name},
+                fields="id",
+            ).execute()
+        except Exception as compensation_error:
+            print(f"Could not restore the previous filename: {compensation_error}")
+        raise
+
+    return new_name

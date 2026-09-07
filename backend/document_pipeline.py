@@ -540,6 +540,70 @@ def descriptive_filename(
     return f"{stem} {stamp}{extension[:12]}"
 
 
+# What people actually type when forwarding something. None of it describes the document,
+# so none of it should become the document's name.
+_CAPTION_FILLER = frozenset({
+    "here", "here you go", "here it is", "this", "this one", "that", "these", "them",
+    "ok", "okay", "k", "hi", "hello", "hey", "yes", "no", "done", "sent", "forwarded",
+    "save", "save this", "save it", "keep", "keep this", "keep it", "store this",
+    "for you", "fyi", "check", "check this", "look", "look at this", "see this",
+    "thanks", "thank you", "ty", "please", "pls", "plz", "important", "urgent", "asap",
+    # Words for the wrapper rather than the contents. Naming a file "Photo" or
+    # "Document" is no better than the placeholder it would replace.
+    "file", "files", "document", "documents", "doc", "docs", "pdf", "img", "image",
+    "images", "photo", "photos", "pic", "pics", "picture", "pictures", "scan", "scans",
+    "screenshot", "screenshots", "note", "notes", "attachment",
+})
+
+# "please save this as Physics unit 3" -> "Physics unit 3". Only the lead-in goes; the
+# thing it was introducing is exactly what we want to keep.
+#
+# The verb is bounded by \b with optional trailing space rather than a required one, so
+# that a caption which is nothing but the lead-in ("pls save") reduces to empty and gets
+# rejected. \b is what keeps "saved receipts" and "Additional notes" intact -- neither
+# "save" nor "add" ends on a word boundary there, so the pattern does not match at all.
+_CAPTION_LEAD_VERB = re.compile(
+    r"^(?:please\s+|pls\s+|plz\s+|kindly\s+)?"
+    r"(?:save|keep|store|file|upload|add|put)\b\s*"
+    r"(?:this|it|these|them)?\s*"
+    r"(?:as|in|to|under|into)?\s*",
+    re.IGNORECASE,
+)
+
+
+def usable_caption(caption: str | None) -> str:
+    """Return the part of a WhatsApp caption worth naming a file after.
+
+    A caption is the only description of a document that the sender ever types by hand.
+    When it says something real it beats anything inferred from the contents: a photo of
+    lecture notes captioned "physics unit 3" should be filed under that name, not under
+    the image model's "Photo of handwritten text".
+
+    Most captions say nothing, though — "here", "pls save this", a lone emoji — and
+    naming a file after those is worse than naming it after its contents. Returns an
+    empty string when nothing usable is left, which callers read as "no caption".
+    """
+    text = unicodedata.normalize("NFKC", caption or "").strip()
+    if not text:
+        return ""
+
+    text = _CAPTION_LEAD_VERB.sub("", text, count=1).strip(" :;,-–—")
+    # Emoji, punctuation and pure symbols make no filename, so a caption has to contain
+    # at least one alphanumeric character to count.
+    if not re.search(r"[A-Za-z0-9]", text):
+        return ""
+
+    # Compared without punctuation or case so "Here you go!!" matches "here you go".
+    normalized = re.sub(r"[^\w\s]", " ", text.lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized or normalized in _CAPTION_FILLER:
+        return ""
+    # One or two characters is a reaction, not a description.
+    if len(normalized) < 3:
+        return ""
+    return text
+
+
 def _normalize_text(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "")
     text = text.replace("\x00", " ")
